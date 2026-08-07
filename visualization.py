@@ -71,7 +71,8 @@ def plot_all_trajectories(trajectories_df: pd.DataFrame, bg_frame: np.ndarray = 
     ax.set_ylabel('y (pixels)')
     ax.set_title(f'All Trajectories  (n={len(particles)} particles)\n'
                  f'○ start  ●  end  |  opacity: early → late')
-    ax.invert_yaxis()
+    if not ax.yaxis_inverted():
+        ax.invert_yaxis()
 
     _save(fig, 'all_trajectories.png')
 
