@@ -1,0 +1,18 @@
+# 출력 결과
+output/
+
+# 입력 영상 (용량이 크므로 제외)
+input/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# 진단 스크립트
+diagnose.py
+
+# 기타
+.DS_Store
