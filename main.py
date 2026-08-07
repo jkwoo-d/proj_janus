@@ -61,7 +61,8 @@ def run(args):
 
     # 영상 파일명(확장자 제외)으로 output 서브디렉토리 자동 설정
     stem = os.path.splitext(os.path.basename(video_path))[0]
-    config.OUTPUT_DIR = os.path.join("output", stem)
+    param_tag = f"d{config.PARTICLE_DIAMETER}_m{config.MIN_MASS}"
+    config.OUTPUT_DIR = os.path.join("output", stem, param_tag)
 
     os.makedirs(config.OUTPUT_DIR, exist_ok=True)
 

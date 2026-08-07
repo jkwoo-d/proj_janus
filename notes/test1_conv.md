@@ -1,0 +1,21 @@
+# Preview Log — test1_conv
+
+## 2026-08-07 15:57:33
+- **검출 입자 수**: 9개 (frame 174)
+- PARTICLE_DIAMETER: `5`
+- MIN_MASS: `200`
+- SEARCH_RANGE: `10`
+- MEMORY: `3`
+- MIN_TRAJECTORY_LENGTH: `20`
+- FPS: `30`
+- PIXEL_SIZE_NM: `None`
+
+## 2026-08-07 15:59:25
+- **검출 입자 수**: 24개 (frame 174)
+- PARTICLE_DIAMETER: `5`
+- MIN_MASS: `150`
+- SEARCH_RANGE: `10`
+- MEMORY: `3`
+- MIN_TRAJECTORY_LENGTH: `20`
+- FPS: `10`
+- PIXEL_SIZE_NM: `None`
