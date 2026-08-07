@@ -1,12 +1,14 @@
 import os
 from collections import Counter
 
+import cv2
 import numpy as np
 import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
+from matplotlib.collections import LineCollection
 from scipy.optimize import curve_fit
 
 import config
@@ -42,12 +44,33 @@ def plot_all_trajectories(trajectories_df: pd.DataFrame, bg_frame: np.ndarray = 
 
     for i, pid in enumerate(particles):
         traj = trajectories_df[trajectories_df['particle'] == pid].sort_values('frame')
-        ax.plot(traj['x'], traj['y'], color=cmap(i % 20), linewidth=0.8, alpha=0.8)
-        ax.plot(traj['x'].iloc[0], traj['y'].iloc[0], '.', color=cmap(i % 20), markersize=3)
+        if len(traj) < 2:
+            continue
 
+        x, y = traj['x'].values, traj['y'].values
+        base_rgba = cmap(i % 20)           # (r, g, b, a)
+        base_rgb  = base_rgba[:3]
+
+        # 각 선분을 시간 순서에 따라 alpha 0.1 → 1.0 으로 그라데이션
+        points   = np.array([x, y]).T.reshape(-1, 1, 2)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
+        n        = len(segments)
+        alphas   = np.linspace(0.1, 1.0, n)
+        colors   = [(*base_rgb, a) for a in alphas]
+
+        lc = LineCollection(segments, colors=colors, linewidth=1.2)
+        ax.add_collection(lc)
+
+        # 시작점(빈 원)과 끝점(채운 원) 표시
+        ax.plot(x[0],  y[0],  'o', color=base_rgb, markersize=3,
+                markerfacecolor='none', markeredgewidth=0.8)
+        ax.plot(x[-1], y[-1], 'o', color=base_rgb, markersize=4)
+
+    ax.autoscale()
     ax.set_xlabel('x (pixels)')
     ax.set_ylabel('y (pixels)')
-    ax.set_title(f'All Trajectories  (n={len(particles)} particles)')
+    ax.set_title(f'All Trajectories  (n={len(particles)} particles)\n'
+                 f'○ start  ●  end  |  opacity: early → late')
     ax.invert_yaxis()
 
     _save(fig, 'all_trajectories.png')
@@ -215,3 +238,59 @@ def plot_motion_type_pie(fit_results: dict):
     ax.set_title(f'Motion Type Distribution  (n={sum(sizes)} particles)')
 
     _save(fig, 'motion_type_distribution.png')
+
+
+def create_tracking_video(trajectories_df: pd.DataFrame, video_path: str,
+                          circle_radius: int = 8):
+    """원본 영상의 매 프레임마다 추적 중인 입자에 동그라미를 쳐서 영상 생성."""
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"  WARNING: 영상을 열 수 없어 추적 영상 생성 생략: {video_path}")
+        return
+
+    fps   = cap.get(cv2.CAP_PROP_FPS) or 10
+    W     = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    H     = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    os.makedirs(config.OUTPUT_DIR, exist_ok=True)
+    out_path = os.path.join(config.OUTPUT_DIR, 'tracking_video.mp4')
+    fourcc   = cv2.VideoWriter_fourcc(*'mp4v')
+    writer   = cv2.VideoWriter(out_path, fourcc, fps, (W, H))
+
+    # 입자별 BGR 색상
+    particles = sorted(trajectories_df['particle'].unique())
+    cmap_src  = _get_cmap('tab20', max(len(particles), 1))
+    bgr_map   = {}
+    for i, pid in enumerate(particles):
+        r, g, b, _ = cmap_src(i % 20)
+        bgr_map[int(pid)] = (int(b * 255), int(g * 255), int(r * 255))
+
+    # 프레임별로 {frame: [(pid, x, y), ...]} 인덱스 구성
+    frame_index: dict[int, list] = {}
+    for pid, grp in trajectories_df.groupby('particle'):
+        for _, row in grp.iterrows():
+            fi = int(row['frame'])
+            frame_index.setdefault(fi, []).append(
+                (int(pid), float(row['x']), float(row['y']))
+            )
+
+    max_frame = int(trajectories_df['frame'].max())
+
+    for frame_idx in range(min(total, max_frame + 1)):
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        for pid, x, y in frame_index.get(frame_idx, []):
+            cx, cy = int(round(x)), int(round(y))
+            color  = bgr_map[pid]
+            cv2.circle(frame, (cx, cy), circle_radius, color, 1, cv2.LINE_AA)
+
+        cv2.putText(frame, f'frame {frame_idx:4d}', (8, 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
+        writer.write(frame)
+
+    cap.release()
+    writer.release()
+    print(f"  Saved: {out_path}")

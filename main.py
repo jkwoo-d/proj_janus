@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+from datetime import datetime
 
 os.environ.setdefault('MPLCONFIGDIR', '/tmp/mpl_cache')
 
@@ -11,6 +12,34 @@ import tracking
 import analysis
 import nta_stats
 import visualization as viz
+
+NOTES_DIR = "notes"
+
+
+def _log_preview(video_stem: str, n_detected: int, frame_idx: int):
+    os.makedirs(NOTES_DIR, exist_ok=True)
+    log_path = os.path.join(NOTES_DIR, f"{video_stem}.md")
+    is_new = not os.path.isfile(log_path)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    entry = (
+        f"\n## {timestamp}\n"
+        f"- **검출 입자 수**: {n_detected}개 (frame {frame_idx})\n"
+        f"- PARTICLE_DIAMETER: `{config.PARTICLE_DIAMETER}`\n"
+        f"- MIN_MASS: `{config.MIN_MASS}`\n"
+        f"- SEARCH_RANGE: `{config.SEARCH_RANGE}`\n"
+        f"- MEMORY: `{config.MEMORY}`\n"
+        f"- MIN_TRAJECTORY_LENGTH: `{config.MIN_TRAJECTORY_LENGTH}`\n"
+        f"- FPS: `{config.FPS}`\n"
+        f"- PIXEL_SIZE_NM: `{config.PIXEL_SIZE_NM}`\n"
+    )
+
+    with open(log_path, "a") as f:
+        if is_new:
+            f.write(f"# Preview Log — {video_stem}\n")
+        f.write(entry)
+
+    print(f"  Log saved → {log_path}")
 
 
 def run(args):
@@ -43,8 +72,9 @@ def run(args):
         mid = info['total_frames'] // 2
         frame = io_video.get_frame(video_path, mid)
         save_path = os.path.join(config.OUTPUT_DIR, 'preview_detection.png')
-        detection.preview_detection(frame, save_path=save_path)
+        f_detected = detection.preview_detection(frame, save_path=save_path)
         print(f"Saved → {save_path}")
+        _log_preview(stem, n_detected=len(f_detected), frame_idx=mid)
         print("Adjust PARTICLE_DIAMETER / MIN_MASS in config.py and re-run --preview.")
         return
 
@@ -139,6 +169,10 @@ def run(args):
             print(f"  WARNING: plotting {n} individual tracks — this may take a while.")
         for pid in sorted(trajectories['particle'].unique()):
             viz.plot_single_trajectory(trajectories, int(pid), msd_dict, fit_results)
+
+    # 추적 영상 생성 (원본 좌표 사용 — 실제 영상 위치와 일치)
+    print("\n  Generating tracking video...")
+    viz.create_tracking_video(trajectories_original, video_path)
 
     print(f"\nDone. All outputs → {config.OUTPUT_DIR}/")
 

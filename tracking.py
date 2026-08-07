@@ -25,7 +25,7 @@ def link_trajectories(detected_df: pd.DataFrame) -> pd.DataFrame:
     n_after = filtered['particle'].nunique()
     print(f"  Linked {n_before} raw tracks → {n_after} tracks "
           f"(≥{config.MIN_TRAJECTORY_LENGTH} frames)")
-    return filtered
+    return filtered.reset_index(drop=True)
 
 
 def compute_and_correct_drift(trajectories_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
