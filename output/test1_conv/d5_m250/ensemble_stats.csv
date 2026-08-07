@@ -1,0 +1,2 @@
+n_particles,D_mean_px²/s,D_median_px²/s,D_std_px²/s,D_p25_px²/s,D_p75_px²/s,alpha_mean,alpha_median,alpha_std,n_brownian,pct_brownian,n_confined,pct_confined,n_directed,pct_directed
+4,188.43122854000586,199.5858846879922,131.14899599270296,115.49908365926686,272.5180295687312,0.29925056686538737,0.1991952700254377,0.28767472673991223,0,0.0,4,100.0,0,0.0
