@@ -1,5 +1,9 @@
-# 출력 결과
+# 출력 결과 (일부 파일만 추적)
 output/
+!output/**/all_trajectories.png
+!output/**/preview_detection.png
+!output/**/ensemble_stats.csv
+!output/**/per_particle_results.csv
 
 # 파라미터 로그는 git에 포함
 # notes/
