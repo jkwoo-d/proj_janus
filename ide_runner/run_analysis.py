@@ -3,17 +3,17 @@ NTA Analysis — IDE 실행용
 ========================
 CLI 없이 IDE(PyCharm, VSCode 등)에서 바로 실행할 수 있는 스크립트입니다.
 아래 [설정] 섹션의 값만 수정하고 파일 전체를 실행하세요.
+
+영상 파일은 ide_runner/input/ 디렉토리에 넣어주세요.
+분석 결과는 ide_runner/output/ 디렉토리에 저장됩니다.
 """
 
 import os
-import sys
-
-# 상위 디렉토리(proj_janus/)의 모듈을 불러옴
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, ROOT)
 
 os.environ.setdefault('MPLCONFIGDIR', '/tmp/mpl_cache')
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+
+ROOT = os.path.dirname(os.path.abspath(__file__))
 
 # ── [설정] 여기만 수정하세요 ──────────────────────────────────────────
 
@@ -54,7 +54,8 @@ import visualization as viz
 # 경로 설정
 video_path = os.path.join(ROOT, "input", VIDEO_FILE)
 if not os.path.isfile(video_path):
-    raise FileNotFoundError(f"영상 파일을 찾을 수 없습니다: {video_path}")
+    raise FileNotFoundError(f"영상 파일을 찾을 수 없습니다: {video_path}\n"
+                            f"ide_runner/input/ 폴더에 영상 파일을 넣어주세요.")
 
 stem      = os.path.splitext(VIDEO_FILE)[0]
 param_tag = f"d{PARTICLE_DIAMETER}_m{MIN_MASS}"
@@ -76,8 +77,8 @@ else:
 # ── 2. 입자 검출 ──────────────────────────────────────────────────────
 
 print("\n[1/5] Detecting particles...")
-frames_gen   = io_video.load_video_frames(video_path)
-detected_df  = detection.detect_particles(frames_gen)
+frames_gen  = io_video.load_video_frames(video_path)
+detected_df = detection.detect_particles(frames_gen)
 
 if detected_df.empty:
     raise RuntimeError("입자가 검출되지 않았습니다. MIN_MASS를 낮추거나 PARTICLE_DIAMETER를 조정하세요.")
@@ -112,9 +113,9 @@ else:
 # ── 5. MSD 분석 ───────────────────────────────────────────────────────
 
 print("\n[4/5] MSD analysis...")
-msd_dict     = analysis.compute_msd_per_particle(trajectories)
-emsd_df      = analysis.compute_ensemble_msd(trajectories)
-fit_results  = analysis.fit_msd(msd_dict)
+msd_dict    = analysis.compute_msd_per_particle(trajectories)
+emsd_df     = analysis.compute_ensemble_msd(trajectories)
+fit_results = analysis.fit_msd(msd_dict)
 print(f"  Fitted {len(fit_results)} / {trajectories['particle'].nunique()} trajectories")
 
 # ── 6. 통계 ───────────────────────────────────────────────────────────
