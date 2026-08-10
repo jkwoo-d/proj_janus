@@ -88,6 +88,91 @@ python3 main.py --video video_conv.mp4 --plot-all
 
 ---
 
+## IDE에서 실행하기 (PyCharm / VSCode)
+
+터미널 없이 PyCharm, VSCode 등 IDE에서 Run 버튼으로 바로 실행할 수 있도록 `ide_runner/` 디렉토리에 별도 스크립트가 준비되어 있습니다.
+
+```
+ide_runner/
+├── run_preview.py    # 파라미터 튜닝용 preview 실행
+└── run_analysis.py   # 전체 분석 파이프라인 실행
+```
+
+### PyCharm 설정 방법
+
+1. PyCharm에서 `proj_janus/` 폴더를 프로젝트로 엽니다.
+2. 우측 상단 또는 `File > Settings > Project > Python Interpreter`에서 Python 인터프리터를 설정합니다.
+   - 패키지가 설치된 환경(venv 또는 시스템 Python)을 선택합니다.
+3. 왼쪽 파일 트리에서 `ide_runner/run_preview.py` 또는 `ide_runner/run_analysis.py`를 엽니다.
+4. 파일 상단 `[설정]` 섹션에서 파라미터를 수정합니다.
+5. 편집창 우클릭 → `Run 'run_preview'` 또는 상단 ▶ 버튼을 클릭합니다.
+
+### VSCode 설정 방법
+
+1. VSCode에서 `proj_janus/` 폴더를 엽니다.
+2. `Ctrl+Shift+P` → `Python: Select Interpreter`로 인터프리터를 지정합니다.
+3. `ide_runner/run_preview.py` 또는 `ide_runner/run_analysis.py`를 엽니다.
+4. 파일 상단 `[설정]` 섹션을 수정합니다.
+5. 우측 상단 ▶ 버튼 또는 `F5`로 실행합니다.
+
+---
+
+### run_preview.py — 파라미터 튜닝
+
+전체 분석 전에 파라미터가 적절한지 확인합니다. 영상 중간 프레임 한 장만 처리하므로 수 초 내에 완료됩니다.
+
+수정해야 할 부분 (`[설정]` 섹션):
+
+```python
+VIDEO_FILE        = "test3_conv.mp4"   # ← 분석할 영상 파일명으로 변경
+FPS               = 10                 # ← 영상 프레임 레이트
+PARTICLE_DIAMETER = 5                  # ← 홀수로 설정, 입자 크기에 맞게 조정
+MIN_MASS          = 200               # ← 낮추면 더 많이 검출, 높이면 노이즈 제거
+```
+
+실행하면 `output/{영상이름}/d{diameter}_m{min_mass}/preview_detection.png`가 생성됩니다. 이 이미지를 열어 원이 실제 입자 위에 잘 얹혀 있는지 확인합니다. 맞지 않으면 `MIN_MASS`나 `PARTICLE_DIAMETER`를 수정하고 다시 실행합니다.
+
+---
+
+### run_analysis.py — 전체 분석
+
+preview에서 파라미터가 확정되면 이 파일을 실행합니다. 전체 영상을 처리하므로 영상 길이에 따라 수십 초~수 분이 소요됩니다.
+
+수정해야 할 부분 (`[설정]` 섹션):
+
+```python
+VIDEO_FILE            = "test3_conv.mp4"   # ← 분석할 영상 파일명
+FPS                   = 10                 # ← 영상 프레임 레이트
+PIXEL_SIZE_NM         = None              # ← nm/pixel 값 (모르면 None 유지)
+
+PARTICLE_DIAMETER     = 5                  # ← preview에서 확정한 값
+MIN_MASS              = 200               # ← preview에서 확정한 값
+SEARCH_RANGE          = 10                # ← 입자가 빠르면 증가
+MEMORY                = 3                 # ← 입자 소실 허용 프레임 수
+MIN_TRAJECTORY_LENGTH = 20               # ← 이 프레임 수 미만인 track은 제외
+
+NO_DRIFT              = False             # ← True면 drift 보정 생략
+PLOT_TRACK_ID         = None             # ← 특정 입자 ID 개별 분석 (예: 5)
+PLOT_ALL              = False            # ← True면 모든 입자 개별 분석
+```
+
+실행이 완료되면 `output/{영상이름}/d{diameter}_m{min_mass}/` 에 모든 결과 파일이 저장되고 터미널(Run 창)에 앙상블 통계가 출력됩니다.
+
+---
+
+### 파라미터를 바꿔가며 비교할 때
+
+`MIN_MASS` 등을 바꾸면 출력 디렉토리가 자동으로 달라집니다. 예를 들어:
+
+```
+output/test3_conv/d5_m200/   ← MIN_MASS=200으로 분석한 결과
+output/test3_conv/d5_m150/   ← MIN_MASS=150으로 분석한 결과
+```
+
+두 결과를 나란히 열어 비교할 수 있으며, 서로 덮어쓰이지 않습니다.
+
+---
+
 ## 전체 옵션
 
 ```
