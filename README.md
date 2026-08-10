@@ -6,7 +6,109 @@
 
 ---
 
-## 설치
+## 환경별 실행 방법
+
+### Linux — 터미널(CLI)로 실행
+
+**1. 필수 프로그램 설치**
+
+```bash
+# Python 패키지
+pip install -r requirements.txt
+
+# ffmpeg (AVI 변환용)
+sudo apt install ffmpeg
+```
+
+**2. 실행**
+
+```bash
+# 파라미터 튜닝
+python3 main.py --video video_conv.mp4 --preview
+
+# 전체 분석
+python3 main.py --video video_conv.mp4
+```
+
+`main.py`와 `input/`, `output/` 디렉토리를 기준으로 동작합니다.
+
+---
+
+### Windows — PyCharm IDE로 실행
+
+Windows에서는 터미널 대신 PyCharm IDE를 통해 `ide_runner/` 폴더만으로 실행합니다.
+
+**1. Python 설치**
+
+[python.org/downloads](https://www.python.org/downloads/) 에서 Python 3.10 이상을 다운로드해 설치합니다.
+설치 시 **"Add Python to PATH"** 체크박스를 반드시 체크합니다.
+
+**2. PyCharm 설치**
+
+[jetbrains.com/pycharm/download](https://www.jetbrains.com/pycharm/download/) 에서 Community Edition(무료)을 다운로드해 설치합니다.
+
+**3. ffmpeg 설치 (AVI 변환용)**
+
+[ffmpeg.org/download.html](https://ffmpeg.org/download.html) → Windows 빌드 다운로드 후 압축 해제.
+`ffmpeg.exe`가 있는 `bin/` 폴더 경로를 Windows 환경변수 PATH에 추가합니다.
+
+> PATH 추가 방법: 시스템 속성 → 고급 → 환경 변수 → Path → 편집 → 새로 만들기 → `C:\ffmpeg\bin` 입력
+
+**4. 저장소 클론**
+
+```bash
+git clone https://github.com/jkwoo-d/proj_janus.git
+```
+
+또는 GitHub에서 ZIP으로 다운로드 후 압축 해제합니다.
+
+**5. PyCharm에서 프로젝트 열기**
+
+PyCharm 실행 → `Open` → `proj_janus/ide_runner/` 폴더 선택.
+
+**6. Python 인터프리터 설정**
+
+`File > Settings > Project > Python Interpreter` → Python 3.10+ 선택.
+우측 `+` 버튼을 눌러 아래 패키지를 설치합니다.
+
+```
+trackpy
+opencv-python
+numpy
+scipy
+matplotlib
+pandas
+pims
+```
+
+또는 PyCharm 하단 터미널에서:
+
+```bash
+pip install -r ../requirements.txt
+```
+
+**7. 영상 파일 준비**
+
+- AVI 파일은 먼저 ffmpeg로 변환합니다 (PowerShell 또는 cmd에서 실행):
+
+```bash
+ffmpeg -i video.avi -c:v libx264 -pix_fmt yuv420p video_conv.mp4
+```
+
+- 변환된 MP4 파일을 `ide_runner/input/` 폴더에 넣습니다.
+
+**8. 파라미터 튜닝 및 분석 실행**
+
+`ide_runner/run_preview.py` 열기 → 상단 `[설정]` 섹션에서 `VIDEO_FILE` 등 수정 → ▶ 버튼 클릭.
+
+결과 이미지(`preview_detection.png`)를 확인하며 `MIN_MASS`, `PARTICLE_DIAMETER`를 조정합니다.
+파라미터가 확정되면 `run_analysis.py`를 같은 방식으로 실행합니다.
+
+모든 결과 파일은 `ide_runner/output/{영상이름}/d{diameter}_m{min_mass}/`에 저장됩니다.
+
+---
+
+## 설치 (Linux CLI 전용)
 
 ```bash
 pip install -r requirements.txt
