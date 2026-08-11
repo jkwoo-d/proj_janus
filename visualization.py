@@ -66,11 +66,15 @@ def plot_all_trajectories(trajectories_df: pd.DataFrame, bg_frame: np.ndarray = 
                 markerfacecolor='none', markeredgewidth=0.8)
         ax.plot(x[-1], y[-1], 'o', color=base_rgb, markersize=4)
 
+        # 끝점 옆에 추적 프레임 수 표시
+        n_frames_traj = len(traj)
+        ax.text(x[-1] + 4, y[-1], str(n_frames_traj),
+                fontsize=5, color=base_rgb, va='center')
+
     ax.autoscale()
     ax.set_xlabel('x (pixels)')
     ax.set_ylabel('y (pixels)')
-    total_frames = int(trajectories_df['frame'].max() - trajectories_df['frame'].min() + 1)
-    ax.set_title(f'All Trajectories  (n={len(particles)} particles,  {total_frames} frames)\n'
+    ax.set_title(f'All Trajectories  (n={len(particles)} particles)\n'
                  f'○ start  ●  end  |  opacity: early → late')
     if not ax.yaxis_inverted():
         ax.invert_yaxis()
