@@ -1,6 +1,5 @@
 import argparse
 import os
-import re
 import sys
 from datetime import datetime
 
@@ -16,37 +15,6 @@ import visualization as viz
 
 NOTES_DIR = "notes"
 
-
-def _load_last_params(stem: str) -> dict:
-    """notes/{stem}.md 에서 가장 마지막 preview 항목의 파라미터를 읽어 반환.
-    파일이 없거나 항목이 없으면 빈 dict 반환."""
-    log_path = os.path.join(NOTES_DIR, f"{stem}.md")
-    if not os.path.isfile(log_path):
-        return {}
-
-    with open(log_path) as f:
-        content = f.read()
-
-    sections = re.split(r'\n## ', content)
-    if len(sections) < 2:
-        return {}
-
-    last = sections[-1]
-    params = {}
-
-    int_keys = ('PARTICLE_DIAMETER', 'MIN_MASS', 'SEARCH_RANGE',
-                'MEMORY', 'MIN_TRAJECTORY_LENGTH', 'FPS')
-    for key in int_keys:
-        m = re.search(rf'{key}: `(\d+)`', last)
-        if m:
-            params[key] = int(m.group(1))
-
-    m = re.search(r'PIXEL_SIZE_NM: `([^`]+)`', last)
-    if m:
-        val = m.group(1).strip()
-        params['PIXEL_SIZE_NM'] = None if val == 'None' else float(val)
-
-    return params
 
 
 def _log_preview(video_stem: str, n_detected: int, frame_idx: int):
@@ -153,17 +121,11 @@ def run(args):
 
     stem = os.path.splitext(os.path.basename(video_path))[0]
 
-    # 2. notes에서 마지막 파라미터 로드
-    last_params = _load_last_params(stem)
-    if last_params:
-        print(f"  [notes/{stem}.md] 마지막 파라미터 로드:")
-        for k, v in last_params.items():
-            setattr(config, k, v)
-            print(f"    {k} = {v}")
-    else:
-        print(f"  [notes/{stem}.md 없음] config.py 기본값 사용")
-
-    # 3. CLI 인자 우선 적용
+    # 2. CLI 인자 적용 (지정된 경우 config.py 기본값 덮어씀)
+    if args.diameter is not None:
+        config.PARTICLE_DIAMETER = args.diameter
+    if args.min_mass is not None:
+        config.MIN_MASS = args.min_mass
     if args.fps is not None:
         config.FPS = args.fps
     if args.pixel_size is not None:
@@ -273,6 +235,10 @@ def main():
                         help='Plot trajectory + MSD for the given particle ID')
     parser.add_argument('--plot-all', action='store_true',
                         help='Plot trajectory + MSD for every tracked particle')
+    parser.add_argument('--diameter', type=int, default=None, metavar='PX',
+                        help='Particle diameter in pixels, odd number (overrides config.PARTICLE_DIAMETER)')
+    parser.add_argument('--min-mass', type=int, default=None, metavar='VAL',
+                        help='Minimum brightness threshold (overrides config.MIN_MASS)')
     parser.add_argument('--fps', type=float, default=None,
                         help='Frame rate in fps (overrides config.FPS)')
     parser.add_argument('--pixel-size', type=float, default=None, metavar='NM',

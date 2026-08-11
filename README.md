@@ -160,19 +160,20 @@ python3 main.py --video video_conv.mp4
 내부적으로 아래 순서로 처리됩니다.
 
 ```
-[1/5] 프레임별 입자 검출 (trackpy Crocker-Grier 알고리즘)
+[1/3] 프레임별 입자 검출 (trackpy Crocker-Grier 알고리즘)
         ↓
-[2/5] Trajectory 링킹 + 짧은 track 제거 (MIN_TRAJECTORY_LENGTH 미만 제외)
+[2/3] Trajectory 링킹 + 짧은 track 제거 (MIN_TRAJECTORY_LENGTH 미만 제외)
         ↓
-[3/5] Drift 보정 — 앙상블 평균 변위를 계산해 stage drift 제거
+[3/3] Drift 계산 (앙상블 평균 변위 산출)
         ↓
-[4/5] MSD 계산 (입자별 + 앙상블)
-      MSD = 4D · Δt^α 로 curve fitting → D, α 추출
-        ↓
-[5/5] 통계 집계 + 시각화 저장
+      ┌─────────────────────────┬─────────────────────────┐
+      │ drift/                  │ no_drift/               │
+      │ drift 보정 후 MSD 분석  │ drift 미보정 MSD 분석   │
+      └─────────────────────────┴─────────────────────────┘
+      각 디렉토리에 통계·시각화 저장
 ```
 
-출력 파일은 `output/{영상이름}/d{diameter}_m{min_mass}/` 에 저장됩니다. 파라미터가 다른 경우 별도 디렉토리에 저장되므로 비교 분석이 가능합니다.
+출력 파일은 `output/{영상이름}/d{diameter}_m{min_mass}/drift/` 및 `no_drift/` 두 디렉토리에 동시 저장됩니다.
 
 ---
 
@@ -285,9 +286,10 @@ python3 main.py --video VIDEO [옵션]
 
 선택:
   --preview             중간 프레임 검출 결과만 확인하고 종료 (파라미터 튜닝용)
+  --diameter PX         입자 직경 픽셀 (홀수, config.py의 PARTICLE_DIAMETER 오버라이드)
+  --min-mass VAL        최소 밝기 임계값 (config.py의 MIN_MASS 오버라이드)
   --fps FPS             프레임 레이트 (config.py의 FPS 오버라이드)
   --pixel-size NM       픽셀 크기 nm/pixel (설정 시 결과가 물리 단위로 출력)
-  --no-drift            drift 보정 생략
   --plot-track ID       특정 입자 ID의 trajectory + MSD 그래프 생성
   --plot-all            모든 입자의 trajectory + MSD 그래프 개별 생성
 ```
@@ -297,6 +299,44 @@ python3 main.py --video VIDEO [옵션]
 ## 출력 파일 설명
 
 출력 경로: `output/{영상이름}/d{PARTICLE_DIAMETER}_m{MIN_MASS}/`
+
+```
+output/{영상이름}/d{diameter}_m{min_mass}/
+├── preview_detection.png     ← --preview 결과 (공통)
+├── drift/                    ← drift 보정 후 분석 결과
+│   ├── drift_correction.png
+│   ├── all_trajectories.png
+│   ├── ensemble_msd.png
+│   ├── ensemble_stats.csv
+│   ├── per_particle_results.csv
+│   ├── diffusion_distribution.png
+│   ├── alpha_distribution.png
+│   ├── motion_type_distribution.png
+│   └── tracking_video.mp4
+└── no_drift/                 ← drift 미보정 분석 결과
+    ├── all_trajectories.png
+    ├── ensemble_msd.png
+    ├── ensemble_stats.csv
+    ├── per_particle_results.csv
+    ├── diffusion_distribution.png
+    ├── alpha_distribution.png
+    ├── motion_type_distribution.png
+    └── tracking_video.mp4
+```
+
+### `drift/` vs `no_drift/` — 두 결과의 차이
+
+전체 분석 실행 시 drift 보정 여부에 따라 두 결과를 동시에 저장합니다. 비교를 통해 어느 결과가 실험 상황에 더 적합한지 판단할 수 있습니다.
+
+| | `drift/` | `no_drift/` |
+|---|---|---|
+| **MSD 분석 대상** | drift 보정된 궤적 | 원본 궤적 |
+| **적합한 상황** | bulk flow 또는 stage drift가 있는 실험 | 유체 흐름이 없는 순수 확산 실험 |
+| **주의** | 정지 입자가 drift 반대 방향으로 움직이는 artifact 가능 (자동 필터 적용) | bulk flow가 있으면 drift 영향이 MSD에 포함되어 α가 과대 추정될 수 있음 |
+
+**drift 보정 원리**: 모든 입자의 앙상블 평균 변위를 프레임마다 계산하고, 이를 개별 궤적에서 차감합니다. 이로써 stage drift나 유체 흐름(bulk flow) 같은 공통 이동을 제거하고 입자 고유의 운동만 남깁니다.
+
+---
 
 ### `preview_detection.png` — 검출 파라미터 확인용
 
