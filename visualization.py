@@ -241,9 +241,58 @@ def plot_motion_type_pie(fit_results: dict):
     _save(fig, 'motion_type_distribution.png')
 
 
+def _draw_marker(frame: np.ndarray, cx: int, cy: int, radius: int,
+                 color: tuple, motion_type: str):
+    """motion_type에 따라 다른 모양의 marker를 그린다."""
+    if motion_type == 'confined':
+        # 사각형
+        cv2.rectangle(frame, (cx - radius, cy - radius),
+                      (cx + radius, cy + radius), color, 1, cv2.LINE_AA)
+    elif motion_type == 'directed':
+        # 위쪽 방향 삼각형
+        pts = np.array([[cx, cy - radius],
+                        [cx - radius, cy + radius],
+                        [cx + radius, cy + radius]], np.int32)
+        cv2.polylines(frame, [pts.reshape(-1, 1, 2)], True, color, 1, cv2.LINE_AA)
+    else:
+        # brownian 또는 미분류 → 원
+        cv2.circle(frame, (cx, cy), radius, color, 1, cv2.LINE_AA)
+
+
+def _draw_legend(frame: np.ndarray, present_types: set, radius: int = 7):
+    """오른쪽 위 코너에 운동 유형별 marker 범례를 그린다."""
+    entries = [(t, t.capitalize()) for t in ('brownian', 'confined', 'directed')
+               if t in present_types]
+    if not entries:
+        return
+
+    H, W   = frame.shape[:2]
+    row_h  = 24
+    pad    = 8
+    leg_w  = 115
+    leg_h  = len(entries) * row_h + pad * 2
+    x0, y0 = W - leg_w - 10, 10
+
+    # 반투명 배경
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (x0, y0), (x0 + leg_w, y0 + leg_h), (30, 30, 30), -1)
+    cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
+
+    for i, (mtype, label) in enumerate(entries):
+        cy = y0 + pad + i * row_h + row_h // 2
+        cx = x0 + pad + radius + 2
+        _draw_marker(frame, cx, cy, radius, (210, 210, 210), mtype)
+        cv2.putText(frame, label, (cx + radius + 7, cy + 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (220, 220, 220), 1, cv2.LINE_AA)
+
+
 def create_tracking_video(trajectories_df: pd.DataFrame, video_path: str,
-                          circle_radius: int = 8):
-    """원본 영상의 매 프레임마다 추적 중인 입자에 동그라미를 쳐서 영상 생성."""
+                          fit_results: dict = None, circle_radius: int = 8):
+    """원본 영상의 매 프레임마다 추적 중인 입자에 marker를 쳐서 영상 생성.
+
+    fit_results가 주어지면 운동 유형(brownian/confined/directed)에 따라
+    marker 모양(원/사각형/삼각형)을 다르게 표시하고 우상단에 범례를 추가한다.
+    """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"  WARNING: 영상을 열 수 없어 추적 영상 생성 생략: {video_path}")
@@ -267,6 +316,13 @@ def create_tracking_video(trajectories_df: pd.DataFrame, video_path: str,
         r, g, b, _ = cmap_src(i % 20)
         bgr_map[int(pid)] = (int(b * 255), int(g * 255), int(r * 255))
 
+    # 입자별 운동 유형 매핑
+    motion_map: dict[int, str] = {}
+    if fit_results:
+        for pid, res in fit_results.items():
+            motion_map[int(pid)] = res.get('motion_type', 'brownian')
+    present_types = set(motion_map.values()) if motion_map else set()
+
     # 프레임별로 {frame: [(pid, x, y), ...]} 인덱스 구성
     frame_index: dict[int, list] = {}
     for pid, grp in trajectories_df.groupby('particle'):
@@ -284,9 +340,13 @@ def create_tracking_video(trajectories_df: pd.DataFrame, video_path: str,
             break
 
         for pid, x, y in frame_index.get(frame_idx, []):
-            cx, cy = int(round(x)), int(round(y))
-            color  = bgr_map[pid]
-            cv2.circle(frame, (cx, cy), circle_radius, color, 1, cv2.LINE_AA)
+            cx, cy     = int(round(x)), int(round(y))
+            color      = bgr_map[pid]
+            mtype      = motion_map.get(pid, 'brownian')
+            _draw_marker(frame, cx, cy, circle_radius, color, mtype)
+
+        if present_types:
+            _draw_legend(frame, present_types, radius=circle_radius - 1)
 
         cv2.putText(frame, f'frame {frame_idx:4d}', (8, 20),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)

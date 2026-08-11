@@ -149,6 +149,6 @@ if PLOT_ALL:
         viz.plot_single_trajectory(trajectories, int(pid), msd_dict, fit_results)
 
 print("\n  Generating tracking video...")
-viz.create_tracking_video(trajectories_original, video_path)
+viz.create_tracking_video(trajectories_original, video_path, fit_results)
 
 print(f"\nDone. All outputs → {config.OUTPUT_DIR}/")

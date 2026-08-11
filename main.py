@@ -173,7 +173,7 @@ def run(args):
 
     # 추적 영상 생성 (원본 좌표 사용 — 실제 영상 위치와 일치)
     print("\n  Generating tracking video...")
-    viz.create_tracking_video(trajectories_original, video_path)
+    viz.create_tracking_video(trajectories_original, video_path, fit_results)
 
     print(f"\nDone. All outputs → {config.OUTPUT_DIR}/")
 
