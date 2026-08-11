@@ -69,7 +69,8 @@ def plot_all_trajectories(trajectories_df: pd.DataFrame, bg_frame: np.ndarray = 
     ax.autoscale()
     ax.set_xlabel('x (pixels)')
     ax.set_ylabel('y (pixels)')
-    ax.set_title(f'All Trajectories  (n={len(particles)} particles)\n'
+    total_frames = int(trajectories_df['frame'].max() - trajectories_df['frame'].min() + 1)
+    ax.set_title(f'All Trajectories  (n={len(particles)} particles,  {total_frames} frames)\n'
                  f'○ start  ●  end  |  opacity: early → late')
     if not ax.yaxis_inverted():
         ax.invert_yaxis()
