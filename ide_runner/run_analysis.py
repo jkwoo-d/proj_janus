@@ -116,6 +116,8 @@ print("\n[4/5] MSD analysis...")
 msd_dict    = analysis.compute_msd_per_particle(trajectories)
 emsd_df     = analysis.compute_ensemble_msd(trajectories)
 fit_results = analysis.fit_msd(msd_dict)
+if drift_df is not None:
+    fit_results = analysis.filter_drift_artifacts(fit_results, trajectories_original, trajectories)
 print(f"  Fitted {len(fit_results)} / {trajectories['particle'].nunique()} trajectories")
 
 # ── 6. 통계 ───────────────────────────────────────────────────────────

@@ -20,7 +20,9 @@ def compute_msd_per_particle(trajectories_df: pd.DataFrame,
     tp.quiet()
     for pid, traj in trajectories_df.groupby('particle'):
         try:
-            msd = tp.msd(traj, mpp=mpp, fps=config.FPS, max_lagtime=max_lagtime, detail=False)
+            n_frames = len(traj['frame'].unique())
+            max_lag = max(4, n_frames // 4)   # 표준 NTA: N/4 이하만 통계적으로 신뢰 가능
+            msd = tp.msd(traj, mpp=mpp, fps=config.FPS, max_lagtime=max_lag, detail=False)
             msd_dict[int(pid)] = msd
         except Exception:
             continue
@@ -58,10 +60,21 @@ def fit_msd(msd_dict: dict[int, pd.DataFrame]) -> dict[int, dict]:
             )
             D, alpha = popt
             perr = np.sqrt(np.diag(pcov))
+            alpha_rel_err = perr[1] / max(abs(alpha), 1e-9)
+            n_lag = int(mask.sum())
 
-            if alpha < 0.85:
+            alpha_ci_hi = alpha + 2 * perr[1]  # 95% CI 상한
+
+            if alpha > 2.0:
+                motion_type = 'brownian'
+            elif alpha_rel_err > 0.3:
+                # 상대 오차가 크더라도 CI 상한이 0.85 미만이면 confined로 분류
+                # (예: α=0.02, alpha_err=0.04 → CI 상한=0.10 → 명백히 confined)
+                motion_type = 'confined' if alpha_ci_hi < 0.85 else 'brownian'
+            elif alpha < 0.85:
                 motion_type = 'confined'
-            elif alpha > 1.15:
+            elif alpha > 1.15 and n_lag >= 8:
+                # directed 판정은 최소 8개 lag time point 필요
                 motion_type = 'directed'
             else:
                 motion_type = 'brownian'
@@ -77,6 +90,31 @@ def fit_msd(msd_dict: dict[int, pd.DataFrame]) -> dict[int, dict]:
             continue
 
     return results
+
+
+def filter_drift_artifacts(fit_results: dict[int, dict],
+                           trajectories_original: pd.DataFrame,
+                           trajectories_corrected: pd.DataFrame,
+                           ratio_threshold: float = 0.1) -> dict[int, dict]:
+    """drift 보정으로 인한 spurious directed 분류를 제거.
+
+    원본 좌표 net displacement / 보정 좌표 net displacement < ratio_threshold 인 경우,
+    정지 입자가 drift 반대 방향으로 움직이는 것처럼 보이는 artifact → brownian으로 재분류.
+    """
+    for pid, res in fit_results.items():
+        if res['motion_type'] != 'directed':
+            continue
+        orig = trajectories_original[trajectories_original['particle'] == pid].sort_values('frame')
+        corr = trajectories_corrected[trajectories_corrected['particle'] == pid].sort_values('frame')
+        if len(orig) < 2 or len(corr) < 2:
+            continue
+        orig_net = float(np.sqrt((orig['x'].iloc[-1] - orig['x'].iloc[0])**2 +
+                                  (orig['y'].iloc[-1] - orig['y'].iloc[0])**2))
+        corr_net = float(np.sqrt((corr['x'].iloc[-1] - corr['x'].iloc[0])**2 +
+                                  (corr['y'].iloc[-1] - corr['y'].iloc[0])**2))
+        if corr_net > 0 and orig_net / corr_net < ratio_threshold:
+            res['motion_type'] = 'brownian'
+    return fit_results
 
 
 def extract_velocity(trajectories_df: pd.DataFrame,

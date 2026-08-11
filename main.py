@@ -27,7 +27,6 @@ def _load_last_params(stem: str) -> dict:
     with open(log_path) as f:
         content = f.read()
 
-    # ## 로 시작하는 섹션을 분리해서 마지막 항목 추출
     sections = re.split(r'\n## ', content)
     if len(sections) < 2:
         return {}
@@ -76,6 +75,71 @@ def _log_preview(video_stem: str, n_detected: int, frame_idx: int):
     print(f"  Log saved → {log_path}")
 
 
+def _analyze_and_save(label: str,
+                      trajectories_for_msd,
+                      trajectories_original,
+                      drift_df,
+                      video_path: str,
+                      output_dir: str,
+                      args):
+    """한 번의 분석 파이프라인 (drift 보정 여부만 다름)."""
+    config.OUTPUT_DIR = output_dir
+    os.makedirs(output_dir, exist_ok=True)
+
+    print(f"\n{'━'*55}")
+    print(f"  [{label}]  →  {output_dir}/")
+    print(f"{'━'*55}")
+
+    if drift_df is not None:
+        viz.plot_drift(drift_df)
+
+    # MSD 분석
+    msd_dict = analysis.compute_msd_per_particle(trajectories_for_msd)
+    emsd_df = analysis.compute_ensemble_msd(trajectories_for_msd)
+    fit_results = analysis.fit_msd(msd_dict)
+
+    if drift_df is not None:
+        fit_results = analysis.filter_drift_artifacts(
+            fit_results, trajectories_original, trajectories_for_msd)
+
+    print(f"  Fitted {len(fit_results)} / {trajectories_for_msd['particle'].nunique()} trajectories")
+
+    if not fit_results:
+        print("  WARNING: MSD fitting failed for all particles.")
+
+    # 통계 저장 + 출력
+    ensemble_stats, per_particle_df = nta_stats.compute_ensemble_stats(fit_results)
+    nta_stats.save_results(ensemble_stats, per_particle_df)
+
+    if not ensemble_stats.empty:
+        print(f"\n=== Ensemble Statistics [{label}] ===")
+        print(ensemble_stats.T.to_string(header=False))
+
+    # 시각화
+    bg_frame = io_video.get_frame(video_path, 0)
+    viz.plot_all_trajectories(trajectories_original, bg_frame)
+    viz.plot_msd_ensemble(emsd_df)
+
+    if fit_results:
+        viz.plot_diffusion_distribution(fit_results)
+        viz.plot_alpha_distribution(fit_results)
+        viz.plot_motion_type_pie(fit_results)
+
+    if args.plot_track is not None:
+        viz.plot_single_trajectory(trajectories_for_msd, args.plot_track, msd_dict, fit_results)
+
+    if args.plot_all:
+        n = trajectories_for_msd['particle'].nunique()
+        if n > 50:
+            print(f"  WARNING: plotting {n} individual tracks — this may take a while.")
+        for pid in sorted(trajectories_for_msd['particle'].unique()):
+            viz.plot_single_trajectory(trajectories_for_msd, int(pid), msd_dict, fit_results)
+
+    print(f"\n  Generating tracking video...")
+    viz.create_tracking_video(trajectories_original, video_path, fit_results)
+    print(f"  Done → {output_dir}/")
+
+
 def run(args):
     # 1. 영상 경로 확정 + stem 추출
     video_path = args.video
@@ -89,7 +153,7 @@ def run(args):
 
     stem = os.path.splitext(os.path.basename(video_path))[0]
 
-    # 2. notes에서 마지막 파라미터 로드 → config 반영 (파일 없으면 config 기본값 유지)
+    # 2. notes에서 마지막 파라미터 로드
     last_params = _load_last_params(stem)
     if last_params:
         print(f"  [notes/{stem}.md] 마지막 파라미터 로드:")
@@ -99,17 +163,17 @@ def run(args):
     else:
         print(f"  [notes/{stem}.md 없음] config.py 기본값 사용")
 
-    # 3. CLI 인자가 있으면 notes보다 우선 적용
+    # 3. CLI 인자 우선 적용
     if args.fps is not None:
         config.FPS = args.fps
     if args.pixel_size is not None:
         config.PIXEL_SIZE_NM = args.pixel_size
 
-    # 4. output 디렉토리 설정
+    # 4. base output 디렉토리 (drift/no_drift 공통 상위)
     param_tag = f"d{config.PARTICLE_DIAMETER}_m{config.MIN_MASS}"
-    config.OUTPUT_DIR = os.path.join("output", stem, param_tag)
-
-    os.makedirs(config.OUTPUT_DIR, exist_ok=True)
+    base_output_dir = os.path.join("output", stem, param_tag)
+    os.makedirs(base_output_dir, exist_ok=True)
+    config.OUTPUT_DIR = base_output_dir  # preview용
 
     # ── preview mode ───────────────────────────────────────────────────────────
     if args.preview:
@@ -117,7 +181,7 @@ def run(args):
         info = io_video.get_video_info(video_path)
         mid = info['total_frames'] // 2
         frame = io_video.get_frame(video_path, mid)
-        save_path = os.path.join(config.OUTPUT_DIR, 'preview_detection.png')
+        save_path = os.path.join(base_output_dir, 'preview_detection.png')
         f_detected = detection.preview_detection(frame, save_path=save_path)
         print(f"Saved → {save_path}")
         _log_preview(stem, n_detected=len(f_detected), frame_idx=mid)
@@ -132,13 +196,12 @@ def run(args):
           f"{info['width']}×{info['height']} px")
 
     if config.PIXEL_SIZE_NM is None:
-        print("WARNING: PIXEL_SIZE_NM not set — results reported in pixel units. "
-              "Use --pixel-size or set PIXEL_SIZE_NM in config.py for physical units.")
+        print("WARNING: PIXEL_SIZE_NM not set — results reported in pixel units.")
     else:
         print(f"Scale  {config.PIXEL_SIZE_NM} nm/pixel")
 
-    # 1. Detect
-    print("\n[1/5] Detecting particles...")
+    # [1/3] Detect
+    print("\n[1/3] Detecting particles...")
     frames_gen = io_video.load_video_frames(video_path)
     detected_df = detection.detect_particles(frames_gen)
 
@@ -151,76 +214,49 @@ def run(args):
         sys.exit(
             f"프레임당 검출 수가 {n_per_frame:.0f}개로 너무 많습니다 (노이즈 과다).\n"
             f"  config.py에서 MIN_MASS를 높여주세요.\n"
-            f"  현재: MIN_MASS={config.MIN_MASS}  →  50 이상으로 시작해보세요.\n"
+            f"  현재: MIN_MASS={config.MIN_MASS}\n"
             f"  --preview 로 먼저 확인 후 조정하세요."
         )
 
-    # 2. Track
-    print("\n[2/5] Linking trajectories...")
+    # [2/3] Track
+    print("\n[2/3] Linking trajectories...")
     trajectories = tracking.link_trajectories(detected_df)
 
     if trajectories.empty or trajectories['particle'].nunique() == 0:
-        sys.exit("No trajectories found. Try lowering MIN_TRAJECTORY_LENGTH or SEARCH_RANGE in config.py.")
+        sys.exit("No trajectories found. Try lowering MIN_TRAJECTORY_LENGTH or SEARCH_RANGE.")
 
-    # 3. Drift correction
-    # 원본 좌표는 시각화(all_trajectories)에 사용, 보정된 좌표는 MSD 분석에 사용
     trajectories_original = trajectories.copy()
-    drift_df = None
-    if not args.no_drift:
-        print("\n[3/5] Drift correction...")
-        trajectories, drift_df = tracking.compute_and_correct_drift(trajectories)
-        viz.plot_drift(drift_df)
-    else:
-        print("\n[3/5] Drift correction skipped (--no-drift).")
 
-    # 4. MSD analysis
-    print("\n[4/5] MSD analysis...")
-    msd_dict = analysis.compute_msd_per_particle(trajectories)
-    emsd_df = analysis.compute_ensemble_msd(trajectories)
-    fit_results = analysis.fit_msd(msd_dict)
-    print(f"  Fitted {len(fit_results)} / {trajectories['particle'].nunique()} trajectories")
+    # [3/3] Drift correction (공통 계산 — 두 모드에서 재사용)
+    print("\n[3/3] Computing drift...")
+    trajectories_corr, drift_df = tracking.compute_and_correct_drift(trajectories.copy())
 
-    if not fit_results:
-        print("WARNING: MSD fitting failed for all particles. "
-              "Trajectories may be too short (increase MIN_TRAJECTORY_LENGTH).")
-
-    # 5. Statistics + save
-    print("\n[5/5] Computing statistics...")
-    ensemble_stats, per_particle_df = nta_stats.compute_ensemble_stats(fit_results)
-    nta_stats.save_results(ensemble_stats, per_particle_df)
-
-    if not ensemble_stats.empty:
-        print("\n=== Ensemble Statistics ===")
-        print(ensemble_stats.T.to_string(header=False))
-
-    # ── Visualisation ──────────────────────────────────────────────────────────
+    # ── 두 모드 분석 ───────────────────────────────────────────────────────────
     print("\n=== Generating plots ===")
-    bg_frame = io_video.get_frame(video_path, 0)
 
-    # all_trajectories는 원본 좌표로 — drift 보정 후 좌표가 프레임 밖으로 나가는 문제 방지
-    viz.plot_all_trajectories(trajectories_original, bg_frame)
-    viz.plot_msd_ensemble(emsd_df)
+    _analyze_and_save(
+        label="drift 보정",
+        trajectories_for_msd=trajectories_corr,
+        trajectories_original=trajectories_original,
+        drift_df=drift_df,
+        video_path=video_path,
+        output_dir=os.path.join(base_output_dir, "drift"),
+        args=args,
+    )
 
-    if fit_results:
-        viz.plot_diffusion_distribution(fit_results)
-        viz.plot_alpha_distribution(fit_results)
-        viz.plot_motion_type_pie(fit_results)
+    _analyze_and_save(
+        label="drift 미보정",
+        trajectories_for_msd=trajectories_original,
+        trajectories_original=trajectories_original,
+        drift_df=None,
+        video_path=video_path,
+        output_dir=os.path.join(base_output_dir, "no_drift"),
+        args=args,
+    )
 
-    if args.plot_track is not None:
-        viz.plot_single_trajectory(trajectories, args.plot_track, msd_dict, fit_results)
-
-    if args.plot_all:
-        n = trajectories['particle'].nunique()
-        if n > 50:
-            print(f"  WARNING: plotting {n} individual tracks — this may take a while.")
-        for pid in sorted(trajectories['particle'].unique()):
-            viz.plot_single_trajectory(trajectories, int(pid), msd_dict, fit_results)
-
-    # 추적 영상 생성 (원본 좌표 사용 — 실제 영상 위치와 일치)
-    print("\n  Generating tracking video...")
-    viz.create_tracking_video(trajectories_original, video_path, fit_results)
-
-    print(f"\nDone. All outputs → {config.OUTPUT_DIR}/")
+    print(f"\nDone. All outputs → {base_output_dir}/")
+    print(f"  ├── drift/      (drift 보정 결과)")
+    print(f"  └── no_drift/   (drift 미보정 결과)")
 
 
 def main():
@@ -237,8 +273,6 @@ def main():
                         help='Plot trajectory + MSD for the given particle ID')
     parser.add_argument('--plot-all', action='store_true',
                         help='Plot trajectory + MSD for every tracked particle')
-    parser.add_argument('--no-drift', action='store_true',
-                        help='Skip drift correction')
     parser.add_argument('--fps', type=float, default=None,
                         help='Frame rate in fps (overrides config.FPS)')
     parser.add_argument('--pixel-size', type=float, default=None, metavar='NM',
