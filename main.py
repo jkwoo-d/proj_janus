@@ -1,5 +1,6 @@
 import argparse
 import os
+import re
 import sys
 from datetime import datetime
 
@@ -14,6 +15,39 @@ import nta_stats
 import visualization as viz
 
 NOTES_DIR = "notes"
+
+
+def _load_last_params(stem: str) -> dict:
+    """notes/{stem}.md 에서 가장 마지막 preview 항목의 파라미터를 읽어 반환.
+    파일이 없거나 항목이 없으면 빈 dict 반환."""
+    log_path = os.path.join(NOTES_DIR, f"{stem}.md")
+    if not os.path.isfile(log_path):
+        return {}
+
+    with open(log_path) as f:
+        content = f.read()
+
+    # ## 로 시작하는 섹션을 분리해서 마지막 항목 추출
+    sections = re.split(r'\n## ', content)
+    if len(sections) < 2:
+        return {}
+
+    last = sections[-1]
+    params = {}
+
+    int_keys = ('PARTICLE_DIAMETER', 'MIN_MASS', 'SEARCH_RANGE',
+                'MEMORY', 'MIN_TRAJECTORY_LENGTH', 'FPS')
+    for key in int_keys:
+        m = re.search(rf'{key}: `(\d+)`', last)
+        if m:
+            params[key] = int(m.group(1))
+
+    m = re.search(r'PIXEL_SIZE_NM: `([^`]+)`', last)
+    if m:
+        val = m.group(1).strip()
+        params['PIXEL_SIZE_NM'] = None if val == 'None' else float(val)
+
+    return params
 
 
 def _log_preview(video_stem: str, n_detected: int, frame_idx: int):
@@ -43,13 +77,7 @@ def _log_preview(video_stem: str, n_detected: int, frame_idx: int):
 
 
 def run(args):
-    # — config overrides —
-    if args.fps is not None:
-        config.FPS = args.fps
-    if args.pixel_size is not None:
-        config.PIXEL_SIZE_NM = args.pixel_size
-
-    # 파일명만 입력한 경우 INPUT_DIR에서 찾음
+    # 1. 영상 경로 확정 + stem 추출
     video_path = args.video
     if not os.path.isfile(video_path):
         candidate = os.path.join(config.INPUT_DIR, video_path)
@@ -59,8 +87,25 @@ def run(args):
             sys.exit(f"ERROR: video file not found: {video_path}\n"
                      f"       (searched in ./ and {config.INPUT_DIR}/)")
 
-    # 영상 파일명(확장자 제외)으로 output 서브디렉토리 자동 설정
     stem = os.path.splitext(os.path.basename(video_path))[0]
+
+    # 2. notes에서 마지막 파라미터 로드 → config 반영 (파일 없으면 config 기본값 유지)
+    last_params = _load_last_params(stem)
+    if last_params:
+        print(f"  [notes/{stem}.md] 마지막 파라미터 로드:")
+        for k, v in last_params.items():
+            setattr(config, k, v)
+            print(f"    {k} = {v}")
+    else:
+        print(f"  [notes/{stem}.md 없음] config.py 기본값 사용")
+
+    # 3. CLI 인자가 있으면 notes보다 우선 적용
+    if args.fps is not None:
+        config.FPS = args.fps
+    if args.pixel_size is not None:
+        config.PIXEL_SIZE_NM = args.pixel_size
+
+    # 4. output 디렉토리 설정
     param_tag = f"d{config.PARTICLE_DIAMETER}_m{config.MIN_MASS}"
     config.OUTPUT_DIR = os.path.join("output", stem, param_tag)
 
