@@ -76,7 +76,8 @@ def _analyze_and_save(label: str,
         print("  WARNING: MSD fitting failed for all particles.")
 
     # 통계 저장 + 출력
-    ensemble_stats, per_particle_df = nta_stats.compute_ensemble_stats(fit_results)
+    ensemble_stats, per_particle_df = nta_stats.compute_ensemble_stats(
+        fit_results, trajectories_original, trajectories_for_msd)
     nta_stats.save_results(ensemble_stats, per_particle_df)
 
     if not ensemble_stats.empty:
@@ -192,6 +193,15 @@ def run(args):
     # [3/3] Drift correction (공통 계산 — 두 모드에서 재사용)
     print("\n[3/3] Computing drift...")
     trajectories_corr, drift_df = tracking.compute_and_correct_drift(trajectories.copy())
+
+    # ── 앙상블 평균 변위 벡터 비교 ────────────────────────────────────────────
+    vm_orig = nta_stats.compute_vector_mean_displacement(trajectories_original)
+    vm_corr = nta_stats.compute_vector_mean_displacement(trajectories_corr)
+    u = vm_orig['unit']
+    print(f"\n=== 앙상블 평균 변위 벡터 (N={vm_orig['n']} particles) ===")
+    print(f"  {'':12}  ⟨Δx⟩       ⟨Δy⟩       |⟨Δr⟩|")
+    print(f"  {'원본':12}  {vm_orig['mean_dx']:+7.2f} {u}  {vm_orig['mean_dy']:+7.2f} {u}  {vm_orig['magnitude']:6.2f} {u}")
+    print(f"  {'drift 보정후':12}  {vm_corr['mean_dx']:+7.2f} {u}  {vm_corr['mean_dy']:+7.2f} {u}  {vm_corr['magnitude']:6.2f} {u}")
 
     # ── 두 모드 분석 ───────────────────────────────────────────────────────────
     print("\n=== Generating plots ===")

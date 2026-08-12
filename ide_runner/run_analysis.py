@@ -123,7 +123,7 @@ print(f"  Fitted {len(fit_results)} / {trajectories['particle'].nunique()} traje
 # ── 6. 통계 ───────────────────────────────────────────────────────────
 
 print("\n[5/5] Computing statistics...")
-ensemble_stats, per_particle_df = nta_stats.compute_ensemble_stats(fit_results)
+ensemble_stats, per_particle_df = nta_stats.compute_ensemble_stats(fit_results, trajectories_original, trajectories)
 nta_stats.save_results(ensemble_stats, per_particle_df)
 
 if not ensemble_stats.empty:

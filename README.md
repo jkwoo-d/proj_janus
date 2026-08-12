@@ -429,6 +429,44 @@ confined / brownian / directed 세 유형의 비율을 시각화합니다. 앙�
 | `n_brownian` / `pct_brownian` | Brownian 입자 수·비율 |
 | `n_confined` / `pct_confined` | Confined 입자 수·비율 |
 | `n_directed` / `pct_directed` | Directed 입자 수·비율 |
+| `net_disp_mean` / `net_disp_median` / `net_disp_std` | 입자별 net displacement(이동 거리 크기)의 분포. 항상 원본 좌표 기준 |
+| `vec_mean_dx` / `vec_mean_dy` | 앙상블 평균 변위 벡터의 x, y 성분 |
+| `vec_mean_mag` | 앙상블 평균 변위 벡터의 크기 `√(⟨Δx⟩² + ⟨Δy⟩²)` |
+
+---
+
+#### 앙상블 평균 변위 벡터 (`vec_mean_dx`, `vec_mean_dy`, `vec_mean_mag`) 해석
+
+**개념**
+
+`vec_mean_dx = ⟨Δx⟩`, `vec_mean_dy = ⟨Δy⟩`는 전체 입자의 시작→끝 변위를 벡터로 평균한 값입니다. 각 성분은 양수/음수 모두 가능하며, 전체 입자가 특정 방향으로 얼마나 편향되었는지를 나타냅니다.
+
+이 값은 개별 입자의 이동 거리(net displacement)의 평균과 다릅니다. 개별 이동 거리는 항상 ≥ 0이므로 순수 Brownian에서도 표본 수에 따라 상당히 크게 나올 수 있습니다. 반면 벡터 평균은 이론적으로 순수 Brownian에서 입자 수가 충분하면 0에 수렴합니다.
+
+**해석 기준**
+
+| 상황 | ⟨Δx⟩, ⟨Δy⟩ | 의미 |
+|------|------------|------|
+| 순수 Brownian | ≈ 0 | 방향성 없는 랜덤 확산 |
+| Stage drift 또는 bulk flow 존재 | 한 방향으로 편향 (예: ⟨Δy⟩ > 0 일관) | 공통 외력에 의한 계통적 이동 |
+| Drift 보정 후에도 잔류 | 보정 후 값이 보정 전과 같거나 오히려 증가 | 입자 수 부족으로 drift 추정이 불안정하거나, 실제 directional flow가 존재 |
+
+**drift/ vs no_drift/ 비교 방법**
+
+분석 실행 시 터미널에 아래와 같이 보정 전후 비교가 출력됩니다.
+
+```
+=== 앙상블 평균 변위 벡터 (N=52 particles) ===
+              ⟨Δx⟩       ⟨Δy⟩       |⟨Δr⟩|
+  원본          -7.85 px   +15.30 px   17.20 px
+  drift 보정후  +4.00 px   -0.47 px    4.02 px
+```
+
+- **보정 후 크게 감소**: stage drift가 주된 원인이었음. 보정이 효과적으로 작동한 것
+- **보정 후에도 크게 남음**: 잔류 flow가 있거나, 추적 입자 수가 너무 적어 drift 추정이 부정확한 것
+- **보정 후 오히려 증가**: 입자 수 부족(일반적으로 N < 20)으로 과보정이 발생한 것. 이 경우 `no_drift/` 결과를 우선 참고
+
+`drift/ensemble_stats.csv`에는 보정된 궤적 기준 벡터 평균이, `no_drift/ensemble_stats.csv`에는 원본 궤적 기준 벡터 평균이 저장됩니다.
 
 ---
 
