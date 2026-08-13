@@ -3,6 +3,8 @@ import os
 import sys
 from datetime import datetime
 
+import pandas as pd
+
 os.environ.setdefault('MPLCONFIGDIR', '/tmp/mpl_cache')
 
 import config
@@ -84,10 +86,27 @@ def _analyze_and_save(label: str,
         print(f"\n=== Ensemble Statistics [{label}] ===")
         print(ensemble_stats.T.to_string(header=False))
 
+    # 각변위 분석
+    angular_dict = analysis.compute_angular_displacement(trajectories_for_msd)
+    ensemble_angular_df = analysis.compute_ensemble_angular_stats(angular_dict)
+
+    if not ensemble_angular_df.empty:
+        ensemble_angular_df.to_csv(
+            os.path.join(output_dir, 'ensemble_angular_stats.csv'), index=False)
+    if angular_dict:
+        per_angular = pd.concat(
+            [df.assign(particle=pid) for pid, df in angular_dict.items()],
+            ignore_index=True
+        )[['particle', 'frame', 'theta_rad', 'delta_theta_rad', 'cumulative_rad', 'cumulative_deg']]
+        per_angular.to_csv(
+            os.path.join(output_dir, 'per_particle_angular.csv'), index=False)
+
     # 시각화
     bg_frame = io_video.get_frame(video_path, 0)
     viz.plot_all_trajectories(trajectories_original, bg_frame)
     viz.plot_msd_ensemble(emsd_df)
+    viz.plot_angular_displacement(angular_dict)
+    viz.plot_ensemble_angular_displacement(ensemble_angular_df)
 
     if fit_results:
         viz.plot_diffusion_distribution(fit_results)
@@ -132,26 +151,28 @@ def run(args):
     if args.pixel_size is not None:
         config.PIXEL_SIZE_NM = args.pixel_size
 
-    # 4. base output 디렉토리 (drift/no_drift 공통 상위)
     param_tag = f"d{config.PARTICLE_DIAMETER}_m{config.MIN_MASS}"
-    base_output_dir = os.path.join("output", stem, param_tag)
-    os.makedirs(base_output_dir, exist_ok=True)
-    config.OUTPUT_DIR = base_output_dir  # preview용
+    stem_output_dir = os.path.join("output", stem)
 
     # ── preview mode ───────────────────────────────────────────────────────────
     if args.preview:
         print("=== Preview Mode ===")
+        os.makedirs(stem_output_dir, exist_ok=True)
         info = io_video.get_video_info(video_path)
         mid = info['total_frames'] // 2
         frame = io_video.get_frame(video_path, mid)
-        save_path = os.path.join(base_output_dir, 'preview_detection.png')
+        save_path = os.path.join(stem_output_dir, f"preview_{param_tag}.png")
         f_detected = detection.preview_detection(frame, save_path=save_path)
         print(f"Saved → {save_path}")
         _log_preview(stem, n_detected=len(f_detected), frame_idx=mid)
         print("Adjust PARTICLE_DIAMETER / MIN_MASS in config.py and re-run --preview.")
         return
 
-    # ── full analysis pipeline ─────────────────────────────────────────────────
+    # base output 디렉토리 (drift/no_drift 공통 상위) — 실제 분석 시에만 생성
+    base_output_dir = os.path.join(stem_output_dir, param_tag)
+    os.makedirs(base_output_dir, exist_ok=True)
+    config.OUTPUT_DIR = base_output_dir
+
     print(f"\n=== NTA Analysis: {video_path} ===")
 
     info = io_video.get_video_info(video_path)

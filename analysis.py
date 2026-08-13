@@ -117,6 +117,75 @@ def filter_drift_artifacts(fit_results: dict[int, dict],
     return fit_results
 
 
+def compute_angular_displacement(trajectories_df: pd.DataFrame) -> dict[int, pd.DataFrame]:
+    """각 입자별 프레임별 속도벡터 방향, 각변위, 누적 각변위 계산.
+
+    중심차분으로 속도벡터 방향 θ를 구하고, 연속 프레임 간 θ 변화량(각변위)을
+    -π ~ π 범위로 누적합산해 누적 각변위를 반환한다.
+    """
+    results = {}
+    for pid, traj in trajectories_df.groupby('particle'):
+        traj = traj.sort_values('frame').reset_index(drop=True)
+        if len(traj) < 3:
+            continue
+
+        x = traj['x'].values
+        y = traj['y'].values
+        frames = traj['frame'].values
+        n = len(traj)
+
+        # 속도벡터 방향 θ — 중심차분 (양 끝은 전방/후방차분)
+        theta = np.empty(n)
+        theta[0]  = np.arctan2(y[1]  - y[0],  x[1]  - x[0])
+        theta[-1] = np.arctan2(y[-1] - y[-2], x[-1] - x[-2])
+        for i in range(1, n - 1):
+            theta[i] = np.arctan2(y[i + 1] - y[i - 1], x[i + 1] - x[i - 1])
+
+        # 각변위 Δθ: 연속 프레임 간 θ 변화, -π ~ π wrap
+        delta = np.empty(n)
+        delta[0] = 0.0
+        delta[1:] = np.angle(np.exp(1j * np.diff(theta)))  # wrap 처리
+
+        # 누적 각변위 (첫 프레임 기준 0)
+        cumulative = np.cumsum(delta)
+
+        results[int(pid)] = pd.DataFrame({
+            'frame':          frames,
+            'theta_rad':      theta,
+            'delta_theta_rad': delta,
+            'cumulative_rad': cumulative,
+            'cumulative_deg': np.degrees(cumulative),
+        })
+
+    return results
+
+
+def compute_ensemble_angular_stats(angular_dict: dict[int, pd.DataFrame]) -> pd.DataFrame:
+    """누적 각변위의 앙상블 통계 — lag step별 mean, std, sem, n."""
+    if not angular_dict:
+        return pd.DataFrame()
+
+    lag_data: dict[int, list] = {}
+    for df in angular_dict.values():
+        cum = df['cumulative_deg'].values
+        for lag, val in enumerate(cum):
+            lag_data.setdefault(lag, []).append(val)
+
+    rows = []
+    for lag in sorted(lag_data):
+        vals = np.array(lag_data[lag])
+        rows.append({
+            'lag_step':          lag,
+            'lag_time_s':        lag / config.FPS,
+            'mean_cumulative_deg': float(vals.mean()),
+            'std_cumulative_deg':  float(vals.std(ddof=1)) if len(vals) > 1 else 0.0,
+            'sem_cumulative_deg':  float(vals.std(ddof=1) / np.sqrt(len(vals))) if len(vals) > 1 else 0.0,
+            'n':                 len(vals),
+        })
+
+    return pd.DataFrame(rows)
+
+
 def extract_velocity(trajectories_df: pd.DataFrame,
                      fit_results: dict[int, dict]) -> pd.Series:
     """Net drift-free velocity for directed-motion particles (µm/s or px/s)."""

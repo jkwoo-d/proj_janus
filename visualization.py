@@ -138,22 +138,40 @@ def plot_drift(drift_df: pd.DataFrame):
     if drift_df.empty:
         return
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+    # tp.compute_drift() returns cumulative drift (cumsum of per-frame means)
+    # drift_df['x'][f] = total x displacement from frame 0 to frame f
+    per_frame = drift_df.diff().fillna(drift_df.iloc[[0]])
 
-    axes[0].plot(drift_df.index, drift_df['x'], label='x drift')
-    axes[0].plot(drift_df.index, drift_df['y'], label='y drift')
+    fig, axes = plt.subplots(1, 3, figsize=(17, 4))
+
+    # Panel 1: per-frame drift increment
+    axes[0].plot(per_frame.index, per_frame['x'], label='x', alpha=0.7)
+    axes[0].plot(per_frame.index, per_frame['y'], label='y', alpha=0.7)
     axes[0].set_xlabel('Frame')
     axes[0].set_ylabel('Drift per frame (pixels)')
     axes[0].set_title('Per-frame Drift')
     axes[0].legend()
 
-    cx = drift_df['x'].cumsum()
-    cy = drift_df['y'].cumsum()
-    axes[1].plot(cx, cy, 'b-')
-    axes[1].set_xlabel('Cumulative x drift (pixels)')
-    axes[1].set_ylabel('Cumulative y drift (pixels)')
-    axes[1].set_title('Cumulative Drift Path')
+    # Panel 2: cumulative drift vs frame
+    axes[1].plot(drift_df.index, drift_df['x'], label='x cumulative', alpha=0.7)
+    axes[1].plot(drift_df.index, drift_df['y'], label='y cumulative', alpha=0.7)
+    axes[1].set_xlabel('Frame')
+    axes[1].set_ylabel('Cumulative drift (pixels)')
+    axes[1].set_title('Cumulative Drift vs Frame')
+    axes[1].legend()
 
+    # Panel 3: 2D cumulative drift path
+    axes[2].plot(drift_df['x'], drift_df['y'], 'b-')
+    axes[2].scatter(drift_df['x'].iloc[0], drift_df['y'].iloc[0],
+                    color='green', zorder=5, label='start')
+    axes[2].scatter(drift_df['x'].iloc[-1], drift_df['y'].iloc[-1],
+                    color='red', zorder=5, label='end')
+    axes[2].set_xlabel('Cumulative x drift (pixels)')
+    axes[2].set_ylabel('Cumulative y drift (pixels)')
+    axes[2].set_title('Cumulative Drift Path')
+    axes[2].legend()
+
+    fig.tight_layout()
     _save(fig, 'drift_correction.png')
 
 
@@ -360,3 +378,71 @@ def create_tracking_video(trajectories_df: pd.DataFrame, video_path: str,
     cap.release()
     writer.release()
     print(f"  Saved: {out_path}")
+
+
+def plot_angular_displacement(angular_dict: dict):
+    """입자별 누적 각변위 vs 시간 (단위: degree)."""
+    if not angular_dict:
+        return
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    cmap = _get_cmap('tab20', max(len(angular_dict), 1))
+
+    for i, (pid, df) in enumerate(sorted(angular_dict.items())):
+        t = df['frame'].values / config.FPS
+        color = cmap(i % 20)
+        # 왼쪽: 각변위 (Δθ)
+        axes[0].plot(t, np.degrees(df['delta_theta_rad'].values),
+                     lw=0.8, alpha=0.7, color=color, label=str(pid))
+        # 오른쪽: 누적 각변위
+        axes[1].plot(t, df['cumulative_deg'].values,
+                     lw=0.8, alpha=0.7, color=color, label=str(pid))
+
+    axes[0].axhline(0, color='k', lw=0.5, ls='--')
+    axes[0].set_xlabel('Time (s)')
+    axes[0].set_ylabel('Δθ (°)')
+    axes[0].set_title('Angular displacement per frame')
+
+    axes[1].axhline(0, color='k', lw=0.5, ls='--')
+    axes[1].set_xlabel('Time (s)')
+    axes[1].set_ylabel('Cumulative angle (°)')
+    axes[1].set_title('Cumulative angular displacement')
+
+    n = len(angular_dict)
+    if n <= 20:
+        axes[1].legend(title='particle', fontsize=6, ncol=2)
+
+    fig.tight_layout()
+    _save(fig, 'angular_displacement.png')
+
+
+def plot_ensemble_angular_displacement(ensemble_df: 'pd.DataFrame'):
+    """앙상블 평균 누적 각변위 ± 95% CI vs 시간."""
+    if ensemble_df is None or ensemble_df.empty:
+        return
+
+    t   = ensemble_df['lag_time_s'].values
+    mu  = ensemble_df['mean_cumulative_deg'].values
+    sem = ensemble_df['sem_cumulative_deg'].values
+    n   = ensemble_df['n'].values
+
+    ci95 = 2 * sem  # 95% CI (정규 근사)
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.fill_between(t, mu - ci95, mu + ci95, alpha=0.25, label='95% CI')
+    ax.plot(t, mu, lw=1.5, label='Ensemble mean')
+    ax.axhline(0, color='k', lw=0.5, ls='--')
+
+    # 오른쪽 y축에 입자 수 표시
+    ax2 = ax.twinx()
+    ax2.plot(t, n, lw=0.8, ls=':', color='gray', alpha=0.6)
+    ax2.set_ylabel('N particles', color='gray', fontsize=9)
+    ax2.tick_params(axis='y', labelcolor='gray')
+
+    ax.set_xlabel('Time (s)')
+    ax.set_ylabel('Cumulative angle (°)')
+    ax.set_title('Ensemble cumulative angular displacement')
+    ax.legend()
+
+    fig.tight_layout()
+    _save(fig, 'ensemble_angular_displacement.png')

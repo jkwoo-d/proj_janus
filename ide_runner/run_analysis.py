@@ -44,6 +44,8 @@ config.SEARCH_RANGE          = SEARCH_RANGE
 config.MEMORY                = MEMORY
 config.MIN_TRAJECTORY_LENGTH = MIN_TRAJECTORY_LENGTH
 
+import pandas as pd
+
 import io_video
 import detection
 import tracking
@@ -135,8 +137,25 @@ if not ensemble_stats.empty:
 print("\n=== Generating plots ===")
 bg_frame = io_video.get_frame(video_path, 0)
 
+# 각변위 분석
+angular_dict = analysis.compute_angular_displacement(trajectories)
+ensemble_angular_df = analysis.compute_ensemble_angular_stats(angular_dict)
+
+if not ensemble_angular_df.empty:
+    ensemble_angular_df.to_csv(
+        os.path.join(config.OUTPUT_DIR, 'ensemble_angular_stats.csv'), index=False)
+if angular_dict:
+    per_angular = pd.concat(
+        [df.assign(particle=pid) for pid, df in angular_dict.items()],
+        ignore_index=True
+    )[['particle', 'frame', 'theta_rad', 'delta_theta_rad', 'cumulative_rad', 'cumulative_deg']]
+    per_angular.to_csv(
+        os.path.join(config.OUTPUT_DIR, 'per_particle_angular.csv'), index=False)
+
 viz.plot_all_trajectories(trajectories_original, bg_frame)
 viz.plot_msd_ensemble(emsd_df)
+viz.plot_angular_displacement(angular_dict)
+viz.plot_ensemble_angular_displacement(ensemble_angular_df)
 
 if fit_results:
     viz.plot_diffusion_distribution(fit_results)
