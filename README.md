@@ -47,7 +47,7 @@ Windows에서는 터미널 대신 PyCharm IDE를 통해 `ide_runner/` 폴더만�
 
 [jetbrains.com/pycharm/download](https://www.jetbrains.com/pycharm/download/) 에서 Community Edition(무료)을 다운로드해 설치합니다.
 
-**3. ffmpeg 설치 (AVI 변환용)**
+**3. ffmpeg 설치 (AVI 디코딩 및 변환용)**
 
 [ffmpeg.org/download.html](https://ffmpeg.org/download.html) → Windows 빌드 다운로드 후 압축 해제.
 `ffmpeg.exe`가 있는 `bin/` 폴더 경로를 Windows 환경변수 PATH에 추가합니다.
@@ -120,10 +120,12 @@ pip install -r requirements.txt
 
 ### Step 1 — 입력 영상 준비
 
-영상 파일을 `input/` 디렉토리에 넣습니다. AVI 파일 중 일부 코덱(yuv411p 등)은 OpenCV가 직접 읽지 못하므로, 이 경우 ffmpeg로 변환합니다.
+영상 파일을 `input/` 디렉토리에 넣습니다. AVI와 MP4 모두 지원합니다.
+
+DV 카메라 등 일부 AVI 코덱(yuv411p 등)은 OpenCV가 직접 디코딩하지 못하는 경우가 있습니다. 이 경우 ffmpeg를 통해 자동으로 읽도록 fallback이 내장되어 있으므로 별도 변환 없이 AVI 파일을 그대로 사용할 수 있습니다. 다만 ffmpeg pipe 방식은 속도가 느리므로, 반복 분석이 필요하다면 미리 MP4로 변환해두는 것을 권장합니다.
 
 ```bash
-ffmpeg -i input/video.avi -c:v libx264 -pix_fmt yuv420p input/video_conv.mp4
+ffmpeg -i input/video.avi -c:v libx264 -pix_fmt yuv420p input/video.mp4
 ```
 
 ---
@@ -136,7 +138,9 @@ ffmpeg -i input/video.avi -c:v libx264 -pix_fmt yuv420p input/video_conv.mp4
 python3 main.py --video video_conv.mp4 --preview
 ```
 
-생성 파일: `output/{영상이름}/d{diameter}_m{min_mass}/preview_detection.png`
+생성 파일: `output/{영상이름}/preview_d{diameter}_m{min_mass}.png`
+
+> **참고**: `--preview`는 파라미터 서브디렉토리를 생성하지 않습니다. 파일명에 파라미터가 포함되어 있어 파라미터를 바꿔가며 실행해도 덮어쓰이지 않습니다.
 
 **`preview_detection.png` 해석 방법**
 - 영상 프레임 위에 검출된 입자 위치가 원으로 표시됩니다.
@@ -301,27 +305,36 @@ python3 main.py --video VIDEO [옵션]
 출력 경로: `output/{영상이름}/d{PARTICLE_DIAMETER}_m{MIN_MASS}/`
 
 ```
-output/{영상이름}/d{diameter}_m{min_mass}/
-├── preview_detection.png     ← --preview 결과 (공통)
-├── drift/                    ← drift 보정 후 분석 결과
-│   ├── drift_correction.png
-│   ├── all_trajectories.png
-│   ├── ensemble_msd.png
-│   ├── ensemble_stats.csv
-│   ├── per_particle_results.csv
-│   ├── diffusion_distribution.png
-│   ├── alpha_distribution.png
-│   ├── motion_type_distribution.png
-│   └── tracking_video.mp4
-└── no_drift/                 ← drift 미보정 분석 결과
-    ├── all_trajectories.png
-    ├── ensemble_msd.png
-    ├── ensemble_stats.csv
-    ├── per_particle_results.csv
-    ├── diffusion_distribution.png
-    ├── alpha_distribution.png
-    ├── motion_type_distribution.png
-    └── tracking_video.mp4
+output/{영상이름}/
+├── preview_d{diameter}_m{min_mass}.png   ← --preview 결과 (파라미터별 별도 저장)
+└── d{diameter}_m{min_mass}/
+    ├── drift/                            ← drift 보정 후 분석 결과
+    │   ├── drift_correction.png
+    │   ├── all_trajectories.png
+    │   ├── ensemble_msd.png
+    │   ├── ensemble_stats.csv
+    │   ├── per_particle_results.csv
+    │   ├── ensemble_angular_stats.csv
+    │   ├── per_particle_angular.csv
+    │   ├── angular_displacement.png
+    │   ├── ensemble_angular_displacement.png
+    │   ├── diffusion_distribution.png
+    │   ├── alpha_distribution.png
+    │   ├── motion_type_distribution.png
+    │   └── tracking_video.mp4
+    └── no_drift/                         ← drift 미보정 분석 결과
+        ├── all_trajectories.png
+        ├── ensemble_msd.png
+        ├── ensemble_stats.csv
+        ├── per_particle_results.csv
+        ├── ensemble_angular_stats.csv
+        ├── per_particle_angular.csv
+        ├── angular_displacement.png
+        ├── ensemble_angular_displacement.png
+        ├── diffusion_distribution.png
+        ├── alpha_distribution.png
+        ├── motion_type_distribution.png
+        └── tracking_video.mp4
 ```
 
 ### `drift/` vs `no_drift/` — 두 결과의 차이
@@ -370,9 +383,11 @@ output/{영상이름}/d{diameter}_m{min_mass}/
 
 ### `drift_correction.png` — Drift 보정 결과
 
-두 개의 그래프로 구성됩니다.
-- **왼쪽**: 프레임별 x/y drift 변위. 값이 크다면 현미경 stage 또는 실험 세팅에서 지속적인 흐름이 있음을 의미합니다.
-- **오른쪽**: 누적 drift 경로. 전체 영상에서 stage가 어느 방향으로 얼마나 이동했는지 확인합니다.
+세 개의 패널로 구성됩니다.
+
+- **왼쪽 (Per-frame Drift)**: 프레임마다 모든 입자의 평균 변위로 추정한 순간 drift. 값이 일정하면 stage가 일정 속도로 이동 중, 들쭉날쭉하면 진동이나 입자 수 부족.
+- **가운데 (Cumulative Drift vs Frame)**: 누적 drift를 프레임 번호에 따라 표시. x/y 각각의 추세를 시간 축으로 확인할 수 있습니다.
+- **오른쪽 (Cumulative Drift Path)**: 누적 drift를 x-y 2D 좌표로 표시한 경로. 초록점이 시작, 빨간점이 끝. stage가 실제로 어떤 방향으로 흘렀는지 직관적으로 파악할 수 있습니다.
 
 drift 보정은 앙상블 평균 변위를 각 입자 trajectory에서 차감하는 방식으로 수행됩니다. 보정 후 남은 이동이 개별 입자의 실제 운동(확산 + 자기추진)에 해당합니다.
 
@@ -467,6 +482,51 @@ confined / brownian / directed 세 유형의 비율을 시각화합니다. 앙�
 - **보정 후 오히려 증가**: 입자 수 부족(일반적으로 N < 20)으로 과보정이 발생한 것. 이 경우 `no_drift/` 결과를 우선 참고
 
 `drift/ensemble_stats.csv`에는 보정된 궤적 기준 벡터 평균이, `no_drift/ensemble_stats.csv`에는 원본 궤적 기준 벡터 평균이 저장됩니다.
+
+---
+
+### `angular_displacement.png` — 입자별 각변위
+
+각 입자의 속도 벡터 방향(θ)을 중심차분법으로 계산하고, 프레임별 각변위(Δθ)와 누적 각변위를 2패널로 표시합니다.
+
+- **왼쪽**: 프레임별 Δθ (−π ~ +π 범위로 wrap). 입자가 시계/반시계 방향으로 어떻게 회전하는지 확인.
+- **오른쪽**: 누적 각변위. 단조 증가하면 지속적인 한 방향 회전(chirality 신호).
+
+---
+
+### `ensemble_angular_displacement.png` — 앙상블 누적 각변위
+
+모든 입자의 누적 각변위 앙상블 평균(실선)과 95% CI(음영)를 표시합니다. 각 입자는 첫 검출 시점을 lag=0으로 정렬하므로 나중에 검출된 입자도 통계에 올바르게 포함됩니다.
+
+- **평균이 0에서 단조 이탈**: 입자 집단 전체에 방향성 있는 회전 경향이 있음 → chirality 또는 외부 토크 신호
+- **95% CI가 0을 포함**: 해당 lag time에서 평균이 통계적으로 0과 구분되지 않음
+- **95% CI = mean ± 2 × SEM** (N이 작으면 t분포가 더 정확하나, 경향성 파악에는 충분)
+
+---
+
+### `ensemble_angular_stats.csv` — 앙상블 각변위 통계
+
+| 항목 | 의미 |
+|------|------|
+| `lag_step` | 상대 lag (각 입자 첫 검출 기준) |
+| `mean_cumulative_deg` | 누적 각변위 앙상블 평균 (도) |
+| `std_cumulative_deg` | 표준편차 |
+| `sem_cumulative_deg` | 표준오차 (SEM = std / √N) |
+| `ci95_deg` | 95% CI 반폭 (= 2 × SEM) |
+| `n` | 해당 lag에 기여한 입자 수 |
+
+---
+
+### `per_particle_angular.csv` — 입자별 각변위 원시 데이터
+
+| 항목 | 의미 |
+|------|------|
+| `particle` | 입자 ID |
+| `frame` | 절대 프레임 번호 |
+| `theta_rad` | 속도 벡터 방향각 (라디안) |
+| `delta_theta_rad` | 프레임 간 각변위 (−π ~ +π) |
+| `cumulative_rad` | 누적 각변위 (라디안) |
+| `cumulative_deg` | 누적 각변위 (도) |
 
 ---
 
