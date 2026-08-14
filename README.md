@@ -540,7 +540,7 @@ confined / brownian / directed 세 유형의 비율을 시각화합니다. 앙�
 
 ```python
 FPS = 30                    # 영상 프레임 레이트 (--fps 옵션으로 오버라이드 가능)
-PIXEL_SIZE_NM = None        # nm/pixel. None이면 픽셀 단위, 값 설정 시 물리 단위 출력
+PIXEL_SIZE_NM = 25          # nm/pixel. None이면 픽셀 단위, 값 설정 시 물리 단위 출력
 
 # 입자 검출 — --preview로 확인하며 조정
 PARTICLE_DIAMETER = 5       # 입자 밝은 영역 직경 (홀수, 픽셀 단위)
