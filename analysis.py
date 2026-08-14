@@ -92,6 +92,31 @@ def fit_msd(msd_dict: dict[int, pd.DataFrame]) -> dict[int, dict]:
     return results
 
 
+def filter_unreliable_fits(fit_results: dict[int, dict]) -> tuple[dict[int, dict], list[dict]]:
+    """fitting 품질이 낮은 입자를 제거한다.
+
+    제거 기준 (OR 조건):
+      1. D_err / D > config.D_ERR_RATIO_MAX  — fitting 불신뢰 (trajectory 링킹 오류 등)
+      2. alpha < config.ALPHA_MIN            — power-law 퇴화 (α≈0 → D 값 무의미)
+
+    Returns:
+        kept    — 필터 통과 입자의 fit_results dict
+        removed — 제거된 입자 정보 리스트 (particle, reason, D, alpha, D_err 포함)
+    """
+    kept: dict[int, dict] = {}
+    removed: list[dict] = []
+    for pid, res in fit_results.items():
+        D, D_err, alpha = res['D'], res['D_err'], res['alpha']
+        rel_err = D_err / max(D, 1e-12)
+        if rel_err > config.D_ERR_RATIO_MAX:
+            removed.append({'particle': pid, 'reason': f'D_err/D={rel_err:.2f}', **res})
+        elif alpha < config.ALPHA_MIN:
+            removed.append({'particle': pid, 'reason': f'alpha={alpha:.3f}', **res})
+        else:
+            kept[pid] = res
+    return kept, removed
+
+
 def filter_drift_artifacts(fit_results: dict[int, dict],
                            trajectories_original: pd.DataFrame,
                            trajectories_corrected: pd.DataFrame,

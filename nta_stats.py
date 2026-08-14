@@ -93,8 +93,12 @@ def compute_ensemble_stats(fit_results: dict,
     return pd.DataFrame([row]), per_particle
 
 
-def save_results(ensemble_stats: pd.DataFrame, per_particle: pd.DataFrame):
+def save_results(ensemble_stats: pd.DataFrame, per_particle: pd.DataFrame,
+                 removed: list[dict] | None = None):
     os.makedirs(config.OUTPUT_DIR, exist_ok=True)
     ensemble_stats.to_csv(f"{config.OUTPUT_DIR}/ensemble_stats.csv", index=False)
     per_particle.to_csv(f"{config.OUTPUT_DIR}/per_particle_results.csv", index=False)
+    if removed:
+        pd.DataFrame(removed).to_csv(
+            f"{config.OUTPUT_DIR}/outliers_removed.csv", index=False)
     print(f"  CSVs saved → {config.OUTPUT_DIR}/")

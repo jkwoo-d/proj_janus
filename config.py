@@ -10,5 +10,9 @@ SEARCH_RANGE = 10           # 프레임 간 최대 이동 허용 픽셀
 MEMORY = 3                  # 입자가 사라졌다 재등장 허용 프레임 수
 MIN_TRAJECTORY_LENGTH = 20  # 분석에 포함할 최소 프레임 수
 
+# Outlier 필터 파라미터
+D_ERR_RATIO_MAX = 0.5   # D_err / D 최대 허용 비율 (초과 시 fitting 불신뢰로 제거)
+ALPHA_MIN       = 0.1   # 최소 허용 α (미만 시 power-law 퇴화 → D 무의미)
+
 INPUT_DIR  = "input"
 OUTPUT_DIR = "output"   # main.py에서 output/<영상이름>/으로 자동 설정됨

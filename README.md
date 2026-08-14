@@ -314,6 +314,7 @@ output/{영상이름}/
     │   ├── ensemble_msd.png
     │   ├── ensemble_stats.csv
     │   ├── per_particle_results.csv
+    │   ├── outliers_removed.csv          ← outlier로 제거된 입자 목록 (해당 시)
     │   ├── ensemble_angular_stats.csv
     │   ├── per_particle_angular.csv
     │   ├── angular_displacement.png
@@ -327,6 +328,7 @@ output/{영상이름}/
         ├── ensemble_msd.png
         ├── ensemble_stats.csv
         ├── per_particle_results.csv
+        ├── outliers_removed.csv          ← outlier로 제거된 입자 목록 (해당 시)
         ├── ensemble_angular_stats.csv
         ├── per_particle_angular.csv
         ├── angular_displacement.png
@@ -530,6 +532,25 @@ confined / brownian / directed 세 유형의 비율을 시각화합니다. 앙�
 
 ---
 
+### `outliers_removed.csv` — Outlier로 제거된 입자 목록
+
+MSD fitting 품질이 낮아 통계에서 제외된 입자의 정보를 저장합니다. 제거된 입자가 없으면 이 파일은 생성되지 않습니다.
+
+제거 기준 (OR 조건):
+
+| 기준 | 의미 | 원인 |
+|------|------|------|
+| `D_err / D > 0.5` | fitting 상대 오차 50% 초과 | trajectory 링킹 오류, 입자 소멸·등장 혼용 등 |
+| `α < 0.1` | 이상확산 지수가 0에 가까움 | confined 입자에 power-law 모델 적용 시 수식 퇴화 — D 값이 무의미 |
+
+> **왜 α < 0.1이면 D가 무의미한가?** `MSD = 4D·Δt^α`에서 α → 0이면 `Δt^α → 1` 이 되어 모델이 사실상 상수가 됩니다. 이 상태에서 fitting은 `D ≈ MSD_평균 / 4`를 반환하는데, plateau MSD 크기에 따라 D가 비정상적으로 크게 나오며 물리적 확산계수와는 무관합니다. 진짜 confined 운동의 MSD 모델은 `r²[1 - exp(-t/τ)]` 형태이며, power-law와는 다른 수식을 사용해야 합니다.
+
+제거된 입자는 `ensemble_stats.csv`, `per_particle_results.csv`, 각종 분포 그래프에 포함되지 않습니다. 제거 내역은 분석 실행 시 터미널에도 출력됩니다.
+
+임계값은 `config.py`의 `D_ERR_RATIO_MAX`와 `ALPHA_MIN`으로 조정할 수 있습니다.
+
+---
+
 ### `per_particle_results.csv` — 입자별 분석 결과
 
 입자 하나하나의 D, α, 운동 유형이 담긴 전체 목록입니다. 특정 입자를 선별하거나 추가 통계 분석을 할 때 활용합니다. `--plot-track ID`로 관심 있는 입자의 개별 trajectory를 확인할 수 있습니다.
@@ -539,7 +560,7 @@ confined / brownian / directed 세 유형의 비율을 시각화합니다. 앙�
 ## 파라미터 설정 (`config.py`)
 
 ```python
-FPS = 30                    # 영상 프레임 레이트 (--fps 옵션으로 오버라이드 가능)
+FPS = 10                    # 영상 프레임 레이트 (--fps 옵션으로 오버라이드 가능)
 PIXEL_SIZE_NM = 25          # nm/pixel. None이면 픽셀 단위, 값 설정 시 물리 단위 출력
 
 # 입자 검출 — --preview로 확인하며 조정
@@ -550,6 +571,10 @@ MIN_MASS = 150              # 최소 밝기 임계값. 낮추면 더 많이 검�
 SEARCH_RANGE = 10           # 프레임 간 최대 이동 허용 픽셀. 입자가 빠르면 증가
 MEMORY = 3                  # 입자 소실 후 재등장 허용 프레임 수
 MIN_TRAJECTORY_LENGTH = 20  # 분석에 포함할 최소 프레임 수. 짧은 noise track 제거
+
+# Outlier 필터 (MSD fitting 품질 기반)
+D_ERR_RATIO_MAX = 0.5       # D_err / D 최대 허용 비율. 초과 시 fitting 불신뢰로 제거
+ALPHA_MIN = 0.1             # 최소 허용 α. 미만 시 power-law 퇴화 → D 값 무의미
 ```
 
 파라미터를 바꾸면 출력 디렉토리가 `d{PARTICLE_DIAMETER}_m{MIN_MASS}` 형식으로 자동 분리되어, 같은 영상에 대해 여러 파라미터 결과를 나란히 보관할 수 있습니다.

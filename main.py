@@ -72,7 +72,13 @@ def _analyze_and_save(label: str,
         fit_results = analysis.filter_drift_artifacts(
             fit_results, trajectories_original, trajectories_for_msd)
 
-    print(f"  Fitted {len(fit_results)} / {trajectories_for_msd['particle'].nunique()} trajectories")
+    fit_results, removed = analysis.filter_unreliable_fits(fit_results)
+    n_total = trajectories_for_msd['particle'].nunique()
+    print(f"  Fitted {len(fit_results)} / {n_total} trajectories"
+          + (f"  ({len(removed)} outlier removed)" if removed else ""))
+    if removed:
+        for r in removed:
+            print(f"    ✗ particle {r['particle']:>5}  {r['reason']}")
 
     if not fit_results:
         print("  WARNING: MSD fitting failed for all particles.")
@@ -80,7 +86,7 @@ def _analyze_and_save(label: str,
     # 통계 저장 + 출력
     ensemble_stats, per_particle_df = nta_stats.compute_ensemble_stats(
         fit_results, trajectories_original, trajectories_for_msd)
-    nta_stats.save_results(ensemble_stats, per_particle_df)
+    nta_stats.save_results(ensemble_stats, per_particle_df, removed)
 
     if not ensemble_stats.empty:
         print(f"\n=== Ensemble Statistics [{label}] ===")
