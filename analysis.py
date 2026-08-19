@@ -66,7 +66,7 @@ def fit_msd(msd_dict: dict[int, pd.DataFrame]) -> dict[int, dict]:
             alpha_ci_hi = alpha + 2 * perr[1]  # 95% CI 상한
 
             if alpha > 2.0:
-                motion_type = 'brownian'
+                motion_type = 'directed'   # super-ballistic → directed로 보수적 처리
             elif alpha_rel_err > 0.3:
                 # 상대 오차가 크더라도 CI 상한이 0.85 미만이면 confined로 분류
                 # (예: α=0.02, alpha_err=0.04 → CI 상한=0.10 → 명백히 confined)
@@ -109,11 +109,45 @@ def filter_unreliable_fits(fit_results: dict[int, dict]) -> tuple[dict[int, dict
         D, D_err, alpha = res['D'], res['D_err'], res['alpha']
         rel_err = D_err / max(D, 1e-12)
         if rel_err > config.D_ERR_RATIO_MAX:
-            removed.append({'particle': pid, 'reason': f'D_err/D={rel_err:.2f}', **res})
+            reason = f'D_err/D={rel_err:.2f}'
+        elif config.D_ERR_ABS_MAX is not None and D_err > config.D_ERR_ABS_MAX:
+            reason = f'D_err={D_err:.4f}'
         elif alpha < config.ALPHA_MIN:
-            removed.append({'particle': pid, 'reason': f'alpha={alpha:.3f}', **res})
+            reason = f'alpha={alpha:.3f}'
         else:
             kept[pid] = res
+            continue
+        removed.append({'particle': pid, 'reason': reason, **res})
+    return kept, removed
+
+
+def filter_outlier_D(fit_results: dict[int, dict]) -> tuple[dict[int, dict], list[dict]]:
+    """log(D) IQR 기반 앙상블 D outlier 제거.
+
+    fitting 품질 필터 통과 후 D 값의 log 분포에서 Tukey fence를 벗어나는 입자를 제거.
+    fence: [Q1 - k*IQR, Q3 + k*IQR] on log(D), k = config.D_OUTLIER_IQR_K.
+    입자 수가 4 미만이면 건너뜀.
+    """
+    if len(fit_results) < 4:
+        return fit_results, []
+
+    log_D = np.array([np.log(res['D']) for res in fit_results.values()])
+    Q1, Q3 = np.percentile(log_D, [25, 75])
+    IQR = Q3 - Q1
+    lo = Q1 - config.D_OUTLIER_IQR_K * IQR
+    hi = Q3 + config.D_OUTLIER_IQR_K * IQR
+
+    kept: dict[int, dict] = {}
+    removed: list[dict] = []
+    for pid, res in fit_results.items():
+        log_d = np.log(res['D'])
+        if log_d < lo:
+            removed.append({'particle': pid, 'reason': f'D_low={res["D"]:.4f}', **res})
+        elif log_d > hi:
+            removed.append({'particle': pid, 'reason': f'D_high={res["D"]:.4f}', **res})
+        else:
+            kept[pid] = res
+
     return kept, removed
 
 
@@ -159,17 +193,31 @@ def compute_angular_displacement(trajectories_df: pd.DataFrame) -> dict[int, pd.
         frames = traj['frame'].values
         n = len(traj)
 
-        # 속도벡터 방향 θ — 중심차분 (양 끝은 전방/후방차분)
+        # frame gap 마스크 — MEMORY > 0으로 생긴 불연속 구간 감지
+        gaps = np.diff(frames) > 1   # gaps[i]=True: frames[i]→frames[i+1] 불연속
+
+        # 속도벡터 방향 θ — 중심차분 (gap 경계는 단방향 차분으로 대체)
         theta = np.empty(n)
         theta[0]  = np.arctan2(y[1]  - y[0],  x[1]  - x[0])
         theta[-1] = np.arctan2(y[-1] - y[-2], x[-1] - x[-2])
         for i in range(1, n - 1):
-            theta[i] = np.arctan2(y[i + 1] - y[i - 1], x[i + 1] - x[i - 1])
+            before_gap = gaps[i - 1]   # frames[i-1]→frames[i] 불연속
+            after_gap  = gaps[i]       # frames[i]→frames[i+1] 불연속
+            if before_gap:
+                theta[i] = np.arctan2(y[i + 1] - y[i], x[i + 1] - x[i])
+            elif after_gap:
+                theta[i] = np.arctan2(y[i] - y[i - 1], x[i] - x[i - 1])
+            else:
+                theta[i] = np.arctan2(y[i + 1] - y[i - 1], x[i + 1] - x[i - 1])
 
         # 각변위 Δθ: 연속 프레임 간 θ 변화, -π ~ π wrap
         delta = np.empty(n)
         delta[0] = 0.0
         delta[1:] = np.angle(np.exp(1j * np.diff(theta)))  # wrap 처리
+        # gap 직후 delta는 의미 없으므로 0으로 마스킹
+        for i in range(1, n):
+            if gaps[i - 1]:
+                delta[i] = 0.0
 
         # 누적 각변위 (첫 프레임 기준 0)
         cumulative = np.cumsum(delta)
@@ -257,6 +305,80 @@ def fit_msd_directed(msd_dict: dict[int, pd.DataFrame]) -> dict[int, dict]:
             results[pid] = {'D': popt[0], 'v': popt[1]}
         except (RuntimeError, ValueError):
             continue
+    return results
+
+
+def compute_brightness_dynamics(trajectories_df: pd.DataFrame) -> dict[int, pd.DataFrame]:
+    """입자별 프레임별 밝기(mass) 시계열 추출.
+
+    선형 추세를 제거한 detrended signal과 정규화 signal을 함께 반환한다.
+    자전으로 인한 주기적 밝기 변동 분석에 사용.
+    """
+    results = {}
+    for pid, traj in trajectories_df.groupby('particle'):
+        traj = traj.sort_values('frame').reset_index(drop=True)
+        if 'mass' not in traj.columns or len(traj) < 5:
+            continue
+
+        frames = traj['frame'].values
+        mass = traj['mass'].values.astype(float)
+        time_s = frames / config.FPS
+
+        mean_mass = mass.mean()
+        mass_norm = (mass - mean_mass) / mean_mass if mean_mass > 0 else mass - mean_mass
+
+        poly = np.polyfit(time_s, mass, 1)
+        mass_detrended = mass - np.polyval(poly, time_s)
+
+        results[int(pid)] = pd.DataFrame({
+            'frame':          frames,
+            'time_s':         time_s,
+            'mass':           mass,
+            'mass_norm':      mass_norm,
+            'mass_detrended': mass_detrended,
+        })
+
+    return results
+
+
+def compute_brightness_fft(brightness_dict: dict[int, pd.DataFrame]) -> dict[int, dict]:
+    """입자별 밝기 시계열의 FFT 파워 스펙트럼 계산.
+
+    detrended signal에 Hann 윈도우를 적용한 후 FFT.
+    peak 주파수와 해당 주기를 함께 반환한다.
+    """
+    results = {}
+    dt = 1.0 / config.FPS
+
+    for pid, df in brightness_dict.items():
+        signal = df['mass_detrended'].values
+        n = len(signal)
+        if n < 10:
+            continue
+
+        window = np.hanning(n)
+        fft_vals = np.fft.rfft(signal * window)
+        freqs = np.fft.rfftfreq(n, d=dt)
+        power = np.abs(fft_vals) ** 2
+
+        mask = freqs > 0
+        freqs_pos = freqs[mask]
+        power_pos = power[mask]
+
+        if len(power_pos) > 0:
+            peak_idx = np.argmax(power_pos)
+            peak_freq = float(freqs_pos[peak_idx])
+            peak_period_s = 1.0 / peak_freq if peak_freq > 0 else np.inf
+        else:
+            peak_freq, peak_period_s = 0.0, np.inf
+
+        results[int(pid)] = {
+            'freq':          freqs_pos,
+            'power':         power_pos,
+            'peak_freq':     peak_freq,
+            'peak_period_s': peak_period_s,
+        }
+
     return results
 
 

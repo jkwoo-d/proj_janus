@@ -68,14 +68,16 @@ def _analyze_and_save(label: str,
     emsd_df = analysis.compute_ensemble_msd(trajectories_for_msd)
     fit_results = analysis.fit_msd(msd_dict)
 
+    fit_results, removed = analysis.filter_unreliable_fits(fit_results)
     if drift_df is not None:
         fit_results = analysis.filter_drift_artifacts(
             fit_results, trajectories_original, trajectories_for_msd)
+    fit_results, d_outliers = analysis.filter_outlier_D(fit_results)
+    removed.extend(d_outliers)
 
-    fit_results, removed = analysis.filter_unreliable_fits(fit_results)
     n_total = trajectories_for_msd['particle'].nunique()
     print(f"  Fitted {len(fit_results)} / {n_total} trajectories"
-          + (f"  ({len(removed)} outlier removed)" if removed else ""))
+          + (f"  ({len(removed)} outliers removed)" if removed else ""))
     if removed:
         for r in removed:
             print(f"    ✗ particle {r['particle']:>5}  {r['reason']}")
@@ -92,9 +94,21 @@ def _analyze_and_save(label: str,
         print(f"\n=== Ensemble Statistics [{label}] ===")
         print(ensemble_stats.T.to_string(header=False))
 
-    # 각변위 분석
-    angular_dict = analysis.compute_angular_displacement(trajectories_for_msd)
+    # 각변위 분석 — 30초 이상 tracking된 입자만 사용
+    min_angular_frames = int(config.ANGULAR_MIN_DURATION_S * config.FPS)
+    frame_counts = trajectories_for_msd.groupby('particle')['frame'].nunique()
+    long_pids = frame_counts[frame_counts >= min_angular_frames].index
+    traj_long = trajectories_for_msd[trajectories_for_msd['particle'].isin(long_pids)]
+    print(f"  Angular: {len(long_pids)} / {frame_counts.shape[0]} particles ≥ {config.ANGULAR_MIN_DURATION_S:.0f}s")
+    angular_dict = analysis.compute_angular_displacement(traj_long)
     ensemble_angular_df = analysis.compute_ensemble_angular_stats(angular_dict)
+
+    # 유효 구간 truncation: n >= N_max / ANGULAR_MIN_N_RATIO
+    if not ensemble_angular_df.empty:
+        n_max = ensemble_angular_df['n'].max()
+        ensemble_angular_df = ensemble_angular_df[
+            ensemble_angular_df['n'] >= n_max / config.ANGULAR_MIN_N_RATIO
+        ].reset_index(drop=True)
 
     if not ensemble_angular_df.empty:
         ensemble_angular_df.to_csv(
@@ -107,12 +121,20 @@ def _analyze_and_save(label: str,
         per_angular.to_csv(
             os.path.join(output_dir, 'per_particle_angular.csv'), index=False)
 
+    # 밝기 변동 분석 — angular 분석과 동일한 long_pids 사용
+    brightness_dict = analysis.compute_brightness_dynamics(traj_long)
+    fft_dict = analysis.compute_brightness_fft(brightness_dict)
+    print(f"  Brightness: {len(brightness_dict)} particles analyzed")
+
     # 시각화
     bg_frame = io_video.get_frame(video_path, 0)
     viz.plot_all_trajectories(trajectories_original, bg_frame)
     viz.plot_msd_ensemble(emsd_df)
     viz.plot_angular_displacement(angular_dict)
+    viz.plot_per_particle_cumulative_angular(angular_dict)
     viz.plot_ensemble_angular_displacement(ensemble_angular_df)
+    viz.plot_brightness_per_particle(brightness_dict)
+    viz.plot_brightness_fft(fft_dict)
 
     if fit_results:
         viz.plot_diffusion_distribution(fit_results)

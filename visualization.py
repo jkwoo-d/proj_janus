@@ -416,6 +416,126 @@ def plot_angular_displacement(angular_dict: dict):
     _save(fig, 'angular_displacement.png')
 
 
+def plot_per_particle_cumulative_angular(angular_dict: dict):
+    """30초 이상 tracking된 입자 개별 누적 각변위 — 입자당 한 subplot."""
+    if not angular_dict:
+        return
+
+    pids = sorted(angular_dict.keys())
+    n = len(pids)
+    ncols = min(4, n)
+    nrows = (n + ncols - 1) // ncols
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 3 * nrows), squeeze=False)
+    cmap = _get_cmap('tab20', max(n, 1))
+
+    for idx, pid in enumerate(pids):
+        ax = axes[idx // ncols][idx % ncols]
+        df = angular_dict[pid]
+        t = df['frame'].values / config.FPS
+        cum = df['cumulative_deg'].values
+        color = cmap(idx % 20)
+        ax.plot(t, cum, lw=1.0, color=color)
+        ax.axhline(0, color='k', lw=0.5, ls='--')
+        ax.set_title(f'particle {pid}', fontsize=8)
+        ax.set_xlabel('Time (s)', fontsize=7)
+        ax.set_ylabel('Cum. angle (°)', fontsize=7)
+        ax.tick_params(labelsize=6)
+        final = cum[-1]
+        ax.annotate(f'{final:+.1f}°', xy=(t[-1], final),
+                    xytext=(0.97, 0.05), textcoords='axes fraction',
+                    ha='right', fontsize=7, color=color)
+
+    for idx in range(n, nrows * ncols):
+        axes[idx // ncols][idx % ncols].set_visible(False)
+
+    fig.suptitle(
+        f'Per-particle cumulative angular displacement  (N={n}, ≥{config.ANGULAR_MIN_DURATION_S:.0f}s)',
+        fontsize=10, y=1.01)
+    fig.tight_layout()
+    _save(fig, 'per_particle_cumulative_angular.png')
+
+
+def plot_brightness_per_particle(brightness_dict: dict):
+    """입자별 밝기(mass) 시계열 — 자전에 의한 주기적 변동 관찰."""
+    if not brightness_dict:
+        return
+
+    pids = sorted(brightness_dict.keys())
+    n = len(pids)
+    ncols = min(4, n)
+    nrows = (n + ncols - 1) // ncols
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 3 * nrows), squeeze=False)
+    cmap = _get_cmap('tab20', max(n, 1))
+
+    for idx, pid in enumerate(pids):
+        ax = axes[idx // ncols][idx % ncols]
+        df = brightness_dict[pid]
+        t = df['time_s'].values
+        color = cmap(idx % 20)
+
+        ax.plot(t, df['mass'].values, lw=0.7, color=color, alpha=0.85)
+        ax.axhline(df['mass'].mean(), color='k', lw=0.5, ls='--')
+
+        cv = df['mass'].std() / df['mass'].mean() * 100 if df['mass'].mean() > 0 else 0
+        ax.set_title(f'particle {pid}', fontsize=8)
+        ax.set_xlabel('Time (s)', fontsize=7)
+        ax.set_ylabel('Mass (a.u.)', fontsize=7)
+        ax.tick_params(labelsize=6)
+        ax.annotate(f'CV={cv:.1f}%', xy=(0.97, 0.95), textcoords='axes fraction',
+                    ha='right', va='top', fontsize=7, color=color)
+
+    for idx in range(n, nrows * ncols):
+        axes[idx // ncols][idx % ncols].set_visible(False)
+
+    fig.suptitle(f'Per-particle brightness dynamics  (N={n})', fontsize=10, y=1.01)
+    fig.tight_layout()
+    _save(fig, 'brightness_per_particle.png')
+
+
+def plot_brightness_fft(fft_dict: dict):
+    """입자별 밝기 FFT 파워 스펙트럼 — 자전 주파수 탐색."""
+    if not fft_dict:
+        return
+
+    pids = sorted(fft_dict.keys())
+    n = len(pids)
+    ncols = min(4, n)
+    nrows = (n + ncols - 1) // ncols
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 3 * nrows), squeeze=False)
+    cmap = _get_cmap('tab20', max(n, 1))
+
+    for idx, pid in enumerate(pids):
+        ax = axes[idx // ncols][idx % ncols]
+        r = fft_dict[pid]
+        color = cmap(idx % 20)
+
+        ax.semilogy(r['freq'], r['power'], lw=0.8, color=color)
+        if r['peak_freq'] > 0:
+            ax.axvline(r['peak_freq'], color='r', lw=0.8, ls='--')
+            ax.annotate(
+                f"{r['peak_freq']:.2f} Hz\n(T={r['peak_period_s']:.2f}s)",
+                xy=(0.97, 0.95), textcoords='axes fraction',
+                ha='right', va='top', fontsize=6, color='r')
+
+        ax.set_title(f'particle {pid}', fontsize=8)
+        ax.set_xlabel('Frequency (Hz)', fontsize=7)
+        ax.set_ylabel('Power', fontsize=7)
+        ax.tick_params(labelsize=6)
+
+    for idx in range(n, nrows * ncols):
+        axes[idx // ncols][idx % ncols].set_visible(False)
+
+    fig.suptitle(
+        f'Brightness FFT power spectrum  (N={n})\n'
+        f'freq resolution = {1.0 / (1.0 / config.FPS):.2f} Hz  |  Nyquist = {config.FPS / 2:.2f} Hz',
+        fontsize=9, y=1.02)
+    fig.tight_layout()
+    _save(fig, 'brightness_fft.png')
+
+
 def plot_ensemble_angular_displacement(ensemble_df: 'pd.DataFrame'):
     """앙상블 평균 누적 각변위 ± 95% CI vs 시간."""
     if ensemble_df is None or ensemble_df.empty:
