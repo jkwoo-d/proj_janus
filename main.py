@@ -123,6 +123,8 @@ def _analyze_and_save(label: str,
 
     # 밝기 변동 분석 — angular 분석과 동일한 long_pids 사용
     brightness_dict = analysis.compute_brightness_dynamics(traj_long)
+    acf_dict = analysis.compute_brightness_acf(brightness_dict)
+    acf_fit_dict = analysis.fit_brightness_acf(acf_dict)
     fft_dict = analysis.compute_brightness_fft(brightness_dict)
     print(f"  Brightness: {len(brightness_dict)} particles analyzed")
 
@@ -134,6 +136,8 @@ def _analyze_and_save(label: str,
     viz.plot_per_particle_cumulative_angular(angular_dict)
     viz.plot_ensemble_angular_displacement(ensemble_angular_df)
     viz.plot_brightness_per_particle(brightness_dict)
+    viz.plot_brightness_acf(acf_dict, acf_fit_dict)
+    viz.plot_ensemble_brightness_acf(acf_dict, acf_fit_dict)
     viz.plot_brightness_fft(fft_dict)
 
     if fit_results:

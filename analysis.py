@@ -341,6 +341,105 @@ def compute_brightness_dynamics(trajectories_df: pd.DataFrame) -> dict[int, pd.D
     return results
 
 
+def compute_brightness_acf(brightness_dict: dict[int, pd.DataFrame],
+                           max_lag_frames: int = None) -> dict[int, pd.DataFrame]:
+    """입자별 밝기 시계열의 정규화 자기상관함수(ACF) 계산.
+
+    C(τ) = ⟨δI(t)δI(t+τ)⟩ / ⟨δI(t)²⟩
+    detrended signal 사용. max_lag_frames 미지정 시 N/4까지 계산.
+    """
+    results = {}
+    for pid, df in brightness_dict.items():
+        signal = df['mass_detrended'].values
+        n = len(signal)
+        if n < 10:
+            continue
+
+        max_lag = min(max_lag_frames, n // 4) if max_lag_frames else n // 4
+        signal_zm = signal - signal.mean()
+        var = float(np.var(signal_zm))
+        if var < 1e-12:
+            continue
+
+        acf_vals = np.array([
+            float(np.mean(signal_zm[:n - lag] * signal_zm[lag:])) / var
+            for lag in range(max_lag + 1)
+        ])
+
+        results[int(pid)] = pd.DataFrame({
+            'lag_frames': np.arange(max_lag + 1),
+            'lag_time_s': np.arange(max_lag + 1) / config.FPS,
+            'acf':        acf_vals,
+        })
+
+    return results
+
+
+def fit_brightness_acf(acf_dict: dict[int, pd.DataFrame]) -> dict[int, dict]:
+    """ACF를 두 모델로 피팅 — Brownian decay vs damped oscillation.
+
+    Model B (Brownian):  C(τ) = A·exp(−τ/τ_r) + C0
+    Model R (Rotation):  C(τ) = A·exp(−τ/τ_r)·cos(ω·τ) + C0
+
+    Model R의 ω > 0 이면 translation-rotation coupling 신호 가능성.
+    """
+    from scipy.optimize import curve_fit
+
+    def _model_b(t, A, tau_r, C0):
+        return A * np.exp(-t / tau_r) + C0
+
+    def _model_r(t, A, tau_r, omega, C0):
+        return A * np.exp(-t / tau_r) * np.cos(omega * t) + C0
+
+    results = {}
+    for pid, df in acf_dict.items():
+        lag_t = df['lag_time_s'].values[1:]   # lag=0 제외 (항상 1.0)
+        acf_vals = df['acf'].values[1:]
+        if len(lag_t) < 4:
+            continue
+
+        entry: dict = {}
+
+        # Model B: pure exponential
+        try:
+            popt, _ = curve_fit(
+                _model_b, lag_t, acf_vals,
+                p0=[acf_vals[0], lag_t[-1] / 3, 0.0],
+                bounds=([-2, 1e-6, -1], [2, 1e6, 1]),
+                maxfev=5000,
+            )
+            A, tau_r, C0 = popt
+            residuals = acf_vals - _model_b(lag_t, *popt)
+            entry['brownian'] = {
+                'A': float(A), 'tau_r': float(tau_r), 'C0': float(C0),
+                'residuals': residuals,
+            }
+        except (RuntimeError, ValueError):
+            pass
+
+        # Model R: damped cosine
+        try:
+            tau_guess = entry['brownian']['tau_r'] if 'brownian' in entry else lag_t[-1] / 3
+            popt2, _ = curve_fit(
+                _model_r, lag_t, acf_vals,
+                p0=[acf_vals[0], tau_guess, 2.0, 0.0],
+                bounds=([-2, 1e-6, 0.01, -1], [2, 1e6, 100, 1]),
+                maxfev=5000,
+            )
+            A2, tau_r2, omega, C0_2 = popt2
+            entry['rotation'] = {
+                'A': float(A2), 'tau_r': float(tau_r2),
+                'omega': float(omega), 'period_s': float(2 * np.pi / omega),
+                'C0': float(C0_2),
+            }
+        except (RuntimeError, ValueError):
+            pass
+
+        results[int(pid)] = entry
+
+    return results
+
+
 def compute_brightness_fft(brightness_dict: dict[int, pd.DataFrame]) -> dict[int, dict]:
     """입자별 밝기 시계열의 FFT 파워 스펙트럼 계산.
 

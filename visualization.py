@@ -466,32 +466,236 @@ def plot_brightness_per_particle(brightness_dict: dict):
     ncols = min(4, n)
     nrows = (n + ncols - 1) // ncols
 
-    fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 3 * nrows), squeeze=False)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 3 * nrows + 0.8), squeeze=False)
     cmap = _get_cmap('tab20', max(n, 1))
+
+    interp_text = (
+        "【해석 가이드】  각 subplot = 개별 입자의 산란 밝기(mass) vs 시간\n"
+        "• 평탄한 신호 → 방향 고정 또는 자전 없음\n"
+        "• 주기적 진동 → Janus 입자 자전 가능성 (Au/Pt 면 교대 노출)\n"
+        "• CV(변동계수) 높을수록 밝기 변동 큼 (자전 또는 포커스 이탈)"
+    )
+    fig.text(0.01, 0.99, interp_text, va='top', ha='left', fontsize=7.5,
+             bbox=dict(boxstyle='round,pad=0.4', fc='lightyellow', ec='goldenrod', alpha=0.85))
 
     for idx, pid in enumerate(pids):
         ax = axes[idx // ncols][idx % ncols]
         df = brightness_dict[pid]
         t = df['time_s'].values
+        mass = df['mass'].values
         color = cmap(idx % 20)
 
-        ax.plot(t, df['mass'].values, lw=0.7, color=color, alpha=0.85)
-        ax.axhline(df['mass'].mean(), color='k', lw=0.5, ls='--')
+        ax.plot(t, mass, lw=0.7, color=color, alpha=0.85)
+        ax.axhline(mass.mean(), color='k', lw=0.5, ls='--')
 
-        cv = df['mass'].std() / df['mass'].mean() * 100 if df['mass'].mean() > 0 else 0
+        cv = mass.std() / mass.mean() * 100 if mass.mean() > 0 else 0
+        cv_color = 'red' if cv > 15 else ('orange' if cv > 8 else 'gray')
         ax.set_title(f'particle {pid}', fontsize=8)
         ax.set_xlabel('Time (s)', fontsize=7)
         ax.set_ylabel('Mass (a.u.)', fontsize=7)
         ax.tick_params(labelsize=6)
         ax.annotate(f'CV={cv:.1f}%', xy=(0.97, 0.95), textcoords='axes fraction',
-                    ha='right', va='top', fontsize=7, color=color)
+                    ha='right', va='top', fontsize=7, color=cv_color,
+                    fontweight='bold' if cv > 8 else 'normal')
 
     for idx in range(n, nrows * ncols):
         axes[idx // ncols][idx % ncols].set_visible(False)
 
-    fig.suptitle(f'Per-particle brightness dynamics  (N={n})', fontsize=10, y=1.01)
-    fig.tight_layout()
+    fig.suptitle(
+        f'Per-particle brightness dynamics  (N={n}, ≥{config.ANGULAR_MIN_DURATION_S:.0f}s)\n'
+        f'산란 밝기의 시간 변화 — 주기적 패턴이 있으면 자전(rotation) 신호',
+        fontsize=9, y=1.0)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
     _save(fig, 'brightness_per_particle.png')
+
+
+def plot_brightness_acf(acf_dict: dict, fit_dict: dict = None):
+    """입자별 밝기 ACF + 피팅 (Brownian decay / damped oscillation)."""
+    if not acf_dict:
+        return
+
+    pids = sorted(acf_dict.keys())
+    n = len(pids)
+    ncols = min(4, n)
+    nrows = (n + ncols - 1) // ncols
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 3 * nrows + 1.2), squeeze=False)
+    cmap = _get_cmap('tab20', max(n, 1))
+
+    dt_ms = 1000.0 / config.FPS
+    interp_text = (
+        "【해석 가이드】  ACF(자기상관함수) = 밝기 변동이 시간차 τ 후에도 유지되는 정도\n"
+        f"  프레임 간격 = {dt_ms:.0f} ms  |  관측 가능 최소 주기 = {2*dt_ms:.0f} ms (Nyquist)\n"
+        "  ── (파란 점선) Brownian 모델: ACF = A·exp(−τ/τᵣ)  →  단조 감쇠 → 순수 브라운 자전\n"
+        "  ── (빨간 실선) Rotation 모델: ACF = A·exp(−τ/τᵣ)·cos(ωτ)  →  감쇠 진동 → 자전 coupling 신호\n"
+        "  ※ ACF ≈ 0 everywhere: Brownian 자전이 프레임 간격보다 빠름 (신호 감지 한계)"
+    )
+    fig.text(0.01, 0.99, interp_text, va='top', ha='left', fontsize=7,
+             bbox=dict(boxstyle='round,pad=0.4', fc='#eef4ff', ec='steelblue', alpha=0.9))
+
+    for idx, pid in enumerate(pids):
+        ax = axes[idx // ncols][idx % ncols]
+        df = acf_dict[pid]
+        t = df['lag_time_s'].values
+        acf_vals = df['acf'].values
+        color = cmap(idx % 20)
+
+        ax.plot(t, acf_vals, lw=0.8, color=color, alpha=0.85, label='ACF')
+        ax.axhline(0, color='k', lw=0.5, ls='--')
+        # 95% noise band (approx 1/sqrt(N) for uncorrelated signal)
+        n_pts = len(acf_vals)
+        noise = 1.96 / np.sqrt(n_pts)
+        ax.axhspan(-noise, noise, alpha=0.08, color='gray', label=f'±95% noise ({noise:.2f})')
+
+        result_label = ''
+        if fit_dict and pid in fit_dict:
+            fit = fit_dict[pid]
+            t_fit = np.linspace(t[1], t[-1], 300)
+            if 'brownian' in fit:
+                r = fit['brownian']
+                y_b = r['A'] * np.exp(-t_fit / r['tau_r']) + r['C0']
+                ax.plot(t_fit, y_b, 'b--', lw=1.0, label=f"Brownian (τ={r['tau_r']:.2f}s)")
+            if 'rotation' in fit:
+                r = fit['rotation']
+                y_r = r['A'] * np.exp(-t_fit / r['tau_r']) * np.cos(r['omega'] * t_fit) + r['C0']
+                ax.plot(t_fit, y_r, 'r-', lw=1.2,
+                        label=f"Rotation (T={r['period_s']:.2f}s)")
+                result_label = f"⟳ T={r['period_s']:.2f}s"
+
+        title_color = 'darkred' if result_label else 'black'
+        ax.set_title(f'particle {pid}' + (f'\n{result_label}' if result_label else ''),
+                     fontsize=8, color=title_color)
+        ax.set_xlabel('Lag time τ (s)', fontsize=7)
+        ax.set_ylabel('ACF C(τ)', fontsize=7)
+        ax.tick_params(labelsize=6)
+        ax.set_ylim(-1.1, 1.1)
+        ax.legend(fontsize=5, loc='upper right')
+
+    for idx in range(n, nrows * ncols):
+        axes[idx // ncols][idx % ncols].set_visible(False)
+
+    fig.suptitle(
+        f'Per-particle brightness ACF  (N={n})\n'
+        '단조 감쇠 → Brownian 자전만 존재 | 감쇠 진동 → translation-rotation coupling 가능성',
+        fontsize=9, y=1.0)
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    _save(fig, 'brightness_acf.png')
+
+
+def plot_ensemble_brightness_acf(acf_dict: dict, fit_dict: dict = None):
+    """앙상블 평균 밝기 ACF ± SEM.
+
+    개별 입자 ACF를 lag별로 평균내어 noise를 줄인다.
+    Brownian 기여(exp decay)를 제거한 잔차(residuals)도 별도 표시.
+    """
+    if not acf_dict:
+        return
+
+    lag_data: dict[int, list] = {}
+    for df in acf_dict.values():
+        for lag, val in zip(df['lag_frames'].values, df['acf'].values):
+            lag_data.setdefault(int(lag), []).append(float(val))
+
+    lags, means, sems, ns = [], [], [], []
+    for lag in sorted(lag_data):
+        vals = np.array(lag_data[lag])
+        lags.append(lag)
+        means.append(float(vals.mean()))
+        sems.append(float(vals.std(ddof=1) / np.sqrt(len(vals))) if len(vals) > 1 else 0.0)
+        ns.append(len(vals))
+
+    lags = np.array(lags)
+    means = np.array(means)
+    sems = np.array(sems)
+    t = lags / config.FPS
+
+    # truncate to N/4 of shortest trajectory
+    n_max = ns[0]
+    valid = np.array(ns) >= n_max / config.ANGULAR_MIN_N_RATIO
+    t, means, sems = t[valid], means[valid], sems[valid]
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    fig.subplots_adjust(top=0.78)
+
+    dt_ms = 1000.0 / config.FPS
+    header = (
+        "【앙상블 밝기 ACF — 해석 가이드】\n"
+        f"  프레임 간격 = {dt_ms:.0f} ms  →  Brownian 자전 (τᵣ ~ 수십 ms) 신호는 첫 lag에서 이미 소멸\n"
+        "  ∴ lag ≥ 1 frame에서 유의미한 ACF가 존재하면 → 방향성 자전(directed rotation) 신호\n"
+        "  [좌] 앙상블 평균 ACF + Brownian 지수감쇠 피팅   [우] Brownian 성분 제거 후 잔차"
+    )
+    fig.text(0.5, 0.97, header, ha='center', va='top', fontsize=8,
+             bbox=dict(boxstyle='round,pad=0.5', fc='#fff8e8', ec='darkorange', alpha=0.92))
+
+    # Panel 1: 앙상블 ACF
+    axes[0].fill_between(t, means - 2 * sems, means + 2 * sems, alpha=0.25, color='steelblue',
+                         label='95% CI')
+    axes[0].plot(t, means, lw=1.5, color='steelblue', label='Ensemble ACF')
+    axes[0].axhline(0, color='k', lw=0.7, ls='--')
+
+    noise_band = 1.96 / np.sqrt(len(acf_dict))
+    axes[0].axhspan(-noise_band, noise_band, alpha=0.1, color='gray',
+                    label=f'±95% noise (N={len(acf_dict)})')
+
+    axes[0].text(0.02, 0.05,
+                 "단조 감쇠 → Brownian 자전 지배\n감쇠 진동 → directed rotation 존재\nACF ≈ 0 → 신호 감지 한계 (τᵣ < 프레임 간격)",
+                 transform=axes[0].transAxes, fontsize=7, va='bottom',
+                 bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='gray', alpha=0.8))
+
+    # 앙상블 Brownian 피팅
+    residuals_b = None
+    popt_b = None
+    if len(t) > 4:
+        from scipy.optimize import curve_fit
+        t_fit_data = t[1:]
+        acf_fit_data = means[1:]
+        try:
+            def _model_b(x, A, tau_r, C0):
+                return A * np.exp(-x / tau_r) + C0
+            popt_b, _ = curve_fit(_model_b, t_fit_data, acf_fit_data,
+                                  p0=[acf_fit_data[0], t_fit_data[-1] / 3, 0.0],
+                                  bounds=([-2, 1e-6, -1], [2, 1e6, 1]), maxfev=5000)
+            t_dense = np.linspace(t[1], t[-1], 300)
+            axes[0].plot(t_dense, _model_b(t_dense, *popt_b), 'r--', lw=1.5,
+                         label=f'Brownian fit\nτᵣ={popt_b[1]:.2f}s')
+            residuals_b = acf_fit_data - _model_b(t_fit_data, *popt_b)
+        except (RuntimeError, ValueError):
+            pass
+
+    axes[0].set_xlabel('Lag time τ (s)', fontsize=10)
+    axes[0].set_ylabel('Ensemble ACF  C(τ)', fontsize=10)
+    axes[0].set_title('① Ensemble brightness ACF', fontsize=10, fontweight='bold')
+    axes[0].set_ylim(-1.1, 1.1)
+    axes[0].legend(fontsize=8)
+
+    # Panel 2: Brownian 제거 후 잔차
+    if residuals_b is not None:
+        res_std = float(np.std(residuals_b))
+        axes[1].plot(t[1:], residuals_b, 'o-', lw=1.0, ms=4, color='steelblue', label='Residual')
+        axes[1].axhline(0, color='k', lw=0.7, ls='--')
+        axes[1].axhspan(-2 * res_std, 2 * res_std, alpha=0.12, color='gray',
+                        label=f'±2σ noise ({2*res_std:.3f})')
+
+        axes[1].text(0.02, 0.97,
+                     "잔차 해석:\n"
+                     "• 잔차 ≈ 0 (±2σ 내) → translation-rotation coupling 없음\n"
+                     "• 잔차에 진동 패턴 → coupling에 의한 방향성 자전 가능성\n"
+                     "  진동 주기 T ≈ 자전 주기",
+                     transform=axes[1].transAxes, fontsize=7.5, va='top',
+                     bbox=dict(boxstyle='round,pad=0.4', fc='#eeffee', ec='seagreen', alpha=0.9))
+
+        axes[1].set_xlabel('Lag time τ (s)', fontsize=10)
+        axes[1].set_ylabel('ACF residual', fontsize=10)
+        axes[1].set_title('② Residuals after Brownian subtraction\n→ translation-rotation coupling signal?',
+                          fontsize=9, fontweight='bold')
+        axes[1].legend(fontsize=8)
+    else:
+        axes[1].text(0.5, 0.5, 'Brownian fit failed\n(ACF too noisy)', transform=axes[1].transAxes,
+                     ha='center', va='center', fontsize=11, color='gray')
+        axes[1].set_title('② Residuals (Brownian subtraction)', fontsize=9)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.78])
+    _save(fig, 'ensemble_brightness_acf.png')
 
 
 def plot_brightness_fft(fft_dict: dict):
@@ -503,9 +707,20 @@ def plot_brightness_fft(fft_dict: dict):
     n = len(pids)
     ncols = min(4, n)
     nrows = (n + ncols - 1) // ncols
+    nyquist = config.FPS / 2
 
-    fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 3 * nrows), squeeze=False)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 3 * nrows + 1.0), squeeze=False)
     cmap = _get_cmap('tab20', max(n, 1))
+
+    interp_text = (
+        "【해석 가이드】  FFT 파워 스펙트럼 = 밝기 진동의 주파수 성분\n"
+        f"  관측 가능 범위: 0 ~ {nyquist:.1f} Hz (Nyquist)  |  피크 주파수 f → 자전 주기 T = 1/f\n"
+        "  • 1/f² 형태의 스펙트럼 → 브라운 노이즈 (자전 신호 없음)\n"
+        "  • 특정 주파수에서 뚜렷한 피크 → 해당 주파수로 자전하는 입자 가능성\n"
+        "  ⚠ 빨간 점선 = 최대 파워 지점 (노이즈 피크일 수 있음 — ACF로 교차 검증 필요)"
+    )
+    fig.text(0.01, 0.99, interp_text, va='top', ha='left', fontsize=7.5,
+             bbox=dict(boxstyle='round,pad=0.4', fc='#f5eeff', ec='mediumpurple', alpha=0.9))
 
     for idx, pid in enumerate(pids):
         ax = axes[idx // ncols][idx % ncols]
@@ -513,26 +728,32 @@ def plot_brightness_fft(fft_dict: dict):
         color = cmap(idx % 20)
 
         ax.semilogy(r['freq'], r['power'], lw=0.8, color=color)
+        ax.axvspan(0, r['freq'][0] if len(r['freq']) > 0 else 0.01,
+                   alpha=0.15, color='gray')  # DC 근방
+
         if r['peak_freq'] > 0:
-            ax.axvline(r['peak_freq'], color='r', lw=0.8, ls='--')
+            ax.axvline(r['peak_freq'], color='r', lw=1.0, ls='--')
             ax.annotate(
-                f"{r['peak_freq']:.2f} Hz\n(T={r['peak_period_s']:.2f}s)",
+                f"peak: {r['peak_freq']:.2f} Hz\nT = {r['peak_period_s']:.2f} s",
                 xy=(0.97, 0.95), textcoords='axes fraction',
-                ha='right', va='top', fontsize=6, color='r')
+                ha='right', va='top', fontsize=6.5, color='darkred',
+                bbox=dict(boxstyle='round,pad=0.2', fc='white', ec='red', alpha=0.7))
 
         ax.set_title(f'particle {pid}', fontsize=8)
         ax.set_xlabel('Frequency (Hz)', fontsize=7)
-        ax.set_ylabel('Power', fontsize=7)
+        ax.set_ylabel('Power (a.u.)', fontsize=7)
         ax.tick_params(labelsize=6)
+        ax.set_xlim(left=0)
 
     for idx in range(n, nrows * ncols):
         axes[idx // ncols][idx % ncols].set_visible(False)
 
     fig.suptitle(
         f'Brightness FFT power spectrum  (N={n})\n'
-        f'freq resolution = {1.0 / (1.0 / config.FPS):.2f} Hz  |  Nyquist = {config.FPS / 2:.2f} Hz',
-        fontsize=9, y=1.02)
-    fig.tight_layout()
+        f'Nyquist = {nyquist:.2f} Hz (T_min = {1/nyquist:.2f}s)  |  '
+        f'뚜렷한 피크 = 자전 신호 후보, 1/f² 스펙트럼 = 브라운 노이즈',
+        fontsize=9, y=1.0)
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
     _save(fig, 'brightness_fft.png')
 
 
