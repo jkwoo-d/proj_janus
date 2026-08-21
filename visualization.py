@@ -389,7 +389,7 @@ def plot_angular_displacement(angular_dict: dict):
     cmap = _get_cmap('tab20', max(len(angular_dict), 1))
 
     for i, (pid, df) in enumerate(sorted(angular_dict.items())):
-        t = df['frame'].values / config.FPS
+        t = (df['frame'].values - df['frame'].values[0]) / config.FPS
         color = cmap(i % 20)
         # 왼쪽: 각변위 (Δθ)
         axes[0].plot(t, np.degrees(df['delta_theta_rad'].values),
@@ -432,7 +432,7 @@ def plot_per_particle_cumulative_angular(angular_dict: dict):
     for idx, pid in enumerate(pids):
         ax = axes[idx // ncols][idx % ncols]
         df = angular_dict[pid]
-        t = df['frame'].values / config.FPS
+        t = (df['frame'].values - df['frame'].values[0]) / config.FPS
         cum = df['cumulative_deg'].values
         color = cmap(idx % 20)
         ax.plot(t, cum, lw=1.0, color=color)
